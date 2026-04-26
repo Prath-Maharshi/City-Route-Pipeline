@@ -1,0 +1,6 @@
+flask
+networkx
+numpy
+scipy
+sumolib
+gunicorn
