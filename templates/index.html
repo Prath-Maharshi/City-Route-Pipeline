@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gurugram Traffic Intelligence</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg:       #0a0c10;
+            --surface:  #111318;
+            --surface2: #181c24;
+            --border:   rgba(255,255,255,0.07);
+            --accent:   #00d4ff;
+            --accent2:  #ff6b35;
+            --green:    #00e5a0;
+            --red:      #ff4466;
+            --purple:   #b06bff;
+            --text:     #e8eaf0;
+            --muted:    #6b7280;
+            --mono:     'Space Mono', monospace;
+            --sans:     'Syne', sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            overflow: hidden;
+        }
+
+        #map {
+            width: 100vw;
+            height: 100vh;
+            filter: brightness(0.9) saturate(0.7);
+        }
+
+        /* ── Panel ─────────────────────────────────────────────────── */
+        #panel {
+            position: absolute;
+            top: 20px; left: 20px;
+            z-index: 999;
+            width: 320px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .card {
+            background: rgba(17,19,24,0.92);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px 20px;
+            backdrop-filter: blur(18px);
+            box-shadow: 0 8px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05);
+        }
+
+        /* ── Header card ──────────────────────────────────────────── */
+        .header-card {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 18px;
+        }
+
+        .logo-dot {
+            width: 36px; height: 36px;
+            border-radius: 50%;
+            background: conic-gradient(var(--accent), var(--accent2), var(--accent));
+            animation: spin 6s linear infinite;
+            flex-shrink: 0;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .header-text h1 {
+            font-family: var(--sans);
+            font-weight: 800;
+            font-size: 15px;
+            letter-spacing: 0.04em;
+            color: var(--text);
+        }
+
+        .header-text p {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--muted);
+            margin-top: 2px;
+            letter-spacing: 0.06em;
+        }
+
+        .status-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--green);
+            margin-left: auto;
+            box-shadow: 0 0 8px var(--green);
+            animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        /* ── Selection indicators ─────────────────────────────────── */
+        .waypoints {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .waypoint {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .waypoint-icon {
+            width: 28px; height: 28px;
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 11px;
+            font-family: var(--mono);
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+
+        .waypoint-icon.start { background: rgba(0,229,160,0.15); color: var(--green); border: 1px solid rgba(0,229,160,0.3); }
+        .waypoint-icon.end   { background: rgba(255,68,102,0.15); color: var(--red);   border: 1px solid rgba(255,68,102,0.3); }
+
+        .waypoint-label {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .waypoint-value {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text);
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .waypoint-value.none {
+            color: var(--muted);
+            font-style: italic;
+        }
+
+        .connector-line {
+            width: 1px;
+            height: 10px;
+            background: var(--border);
+            margin-left: 13px;
+        }
+
+        /* ── Hour slider ──────────────────────────────────────────── */
+        .slider-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .hour-badge {
+            font-family: var(--mono);
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--accent);
+            min-width: 40px;
+            letter-spacing: -1px;
+        }
+
+        .hour-label {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted);
+            letter-spacing: 0.08em;
+        }
+
+        .slider-wrap { flex: 1; }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 3px;
+            background: var(--surface2);
+            border-radius: 2px;
+            outline: none;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px; height: 14px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--accent);
+            transition: transform 0.15s;
+        }
+
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.3); }
+
+        /* Time-of-day labels */
+        .tod-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 5px;
+        }
+        .tod-labels span {
+            font-family: var(--mono);
+            font-size: 8px;
+            color: var(--muted);
+        }
+
+        /* ── Buttons ──────────────────────────────────────────────── */
+        .btn-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 9px;
+            font-family: var(--sans);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            letter-spacing: 0.04em;
+            transition: all 0.18s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), #0099cc);
+            color: #000;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(0,212,255,0.35);
+        }
+
+        .btn-danger {
+            background: rgba(255,68,102,0.12);
+            color: var(--red);
+            border: 1px solid rgba(255,68,102,0.25);
+        }
+
+        .btn-danger:hover {
+            background: rgba(255,68,102,0.2);
+            transform: translateY(-1px);
+        }
+
+        /* ── Result card ──────────────────────────────────────────── */
+        #result-card {
+            display: none;
+        }
+
+        .result-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .metric {
+            background: var(--surface2);
+            border-radius: 10px;
+            padding: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .metric-label {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        .metric-value {
+            font-family: var(--mono);
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text);
+            line-height: 1;
+        }
+
+        .metric-value span {
+            font-size: 10px;
+            color: var(--muted);
+            font-weight: 400;
+        }
+
+        .metric-sub {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+
+        .routing-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 8px;
+            border-radius: 20px;
+            font-family: var(--mono);
+            font-size: 9px;
+            letter-spacing: 0.05em;
+            margin-top: 8px;
+        }
+
+        .routing-badge.movement {
+            background: rgba(0,212,255,0.1);
+            color: var(--accent);
+            border: 1px solid rgba(0,212,255,0.2);
+        }
+
+        .routing-badge.fallback {
+            background: rgba(255,107,53,0.1);
+            color: var(--accent2);
+            border: 1px solid rgba(255,107,53,0.2);
+        }
+
+        .badge-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+        /* ── Removal impact card ──────────────────────────────────── */
+        #removal-card {
+            display: none;
+        }
+
+        .removal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .removal-title {
+            font-family: var(--sans);
+            font-weight: 600;
+            font-size: 12px;
+            color: var(--accent2);
+            letter-spacing: 0.04em;
+        }
+
+        .removal-close {
+            background: none;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 16px;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .removal-close:hover { color: var(--text); }
+
+        .impact-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 7px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .impact-row:last-child { border-bottom: none; }
+
+        .impact-key {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--muted);
+        }
+
+        .impact-val {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text);
+            font-weight: 700;
+        }
+
+        .impact-val.warn { color: var(--purple); }
+        .impact-val.danger { color: var(--red); }
+        .impact-val.ok { color: var(--green); }
+
+        /* ── Legend ───────────────────────────────────────────────── */
+        #legend-card {
+            padding: 14px 18px;
+        }
+
+        .legend-title {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .legend-items {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted);
+        }
+
+        .legend-line {
+            width: 24px;
+            height: 3px;
+            border-radius: 2px;
+        }
+
+        /* ── Hint toast ───────────────────────────────────────────── */
+        #hint {
+            position: absolute;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(17,19,24,0.9);
+            border: 1px solid var(--border);
+            border-radius: 30px;
+            padding: 8px 18px;
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--muted);
+            backdrop-filter: blur(12px);
+            z-index: 999;
+            pointer-events: none;
+            transition: opacity 0.4s;
+        }
+
+        #hint em {
+            color: var(--accent);
+            font-style: normal;
+        }
+
+        /* ── Loader ───────────────────────────────────────────────── */
+        #loader {
+            position: absolute;
+            top: 20px; right: 20px;
+            z-index: 999;
+            background: rgba(17,19,24,0.9);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 16px;
+            display: none;
+            align-items: center;
+            gap: 10px;
+            backdrop-filter: blur(12px);
+        }
+
+        .spinner {
+            width: 14px; height: 14px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+
+        #loader span {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 0.06em;
+        }
+
+        /* ── Leaflet overrides ────────────────────────────────────── */
+        .leaflet-control-zoom {
+            border: 1px solid var(--border) !important;
+            border-radius: 10px !important;
+            overflow: hidden;
+        }
+
+        .leaflet-control-zoom-in,
+        .leaflet-control-zoom-out {
+            background: rgba(17,19,24,0.9) !important;
+            color: var(--text) !important;
+            border: none !important;
+        }
+
+        .leaflet-control-zoom-in:hover,
+        .leaflet-control-zoom-out:hover {
+            background: var(--surface2) !important;
+        }
+
+        .leaflet-control-attribution {
+            background: rgba(17,19,24,0.7) !important;
+            color: var(--muted) !important;
+            font-size: 9px !important;
+        }
+
+        .leaflet-tooltip {
+            background: rgba(17,19,24,0.95) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: 8px !important;
+            color: var(--text) !important;
+            font-family: var(--mono) !important;
+            font-size: 11px !important;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4) !important;
+            padding: 8px 12px !important;
+        }
+
+        .leaflet-tooltip::before { display: none !important; }
+
+        /* ── Divider ──────────────────────────────────────────────── */
+        .divider {
+            height: 1px;
+            background: var(--border);
+            margin: 4px 0;
+        }
+
+        .section-label {
+            font-family: var(--mono);
+            font-size: 9px;
+            color: var(--muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- ── Main Panel ──────────────────────────────────────────────────── -->
+<div id="panel">
+
+    <!-- Header -->
+    <div class="card header-card">
+        <div class="logo-dot"></div>
+        <div class="header-text">
+            <h1>GURUGRAM TRAFFIC</h1>
+            <p>MOVEMENT-AWARE ROUTING ENGINE</p>
+        </div>
+        <div class="status-dot" title="Network live"></div>
+    </div>
+
+    <!-- Waypoints -->
+    <div class="card">
+        <div class="section-label">Route Selection</div>
+        <div class="waypoints">
+            <div class="waypoint">
+                <div class="waypoint-icon start">A</div>
+                <div>
+                    <div class="waypoint-label">Origin Edge</div>
+                    <div class="waypoint-value none" id="start-lbl">Click a road to set origin</div>
+                </div>
+            </div>
+            <div class="connector-line"></div>
+            <div class="waypoint">
+                <div class="waypoint-icon end">B</div>
+                <div>
+                    <div class="waypoint-label">Destination Edge</div>
+                    <div class="waypoint-value none" id="end-lbl">Click a road to set destination</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="divider" style="margin: 14px 0;"></div>
+
+        <!-- Hour -->
+        <div class="section-label">Time of Day</div>
+        <div class="slider-row">
+            <div>
+                <div class="hour-badge" id="hour-display">12</div>
+                <div class="hour-label">HOUR</div>
+            </div>
+            <div class="slider-wrap">
+                <input type="range" id="hour" min="0" max="23" value="12">
+                <div class="tod-labels">
+                    <span>00:00</span>
+                    <span>06:00</span>
+                    <span>12:00</span>
+                    <span>18:00</span>
+                    <span>23:00</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="divider" style="margin: 14px 0;"></div>
+
+        <!-- Buttons -->
+        <div class="btn-row">
+            <button class="btn btn-primary" onclick="calculateRoute()">↗ Find Route</button>
+            <button class="btn btn-danger" onclick="restoreEdges()">⊘ Restore</button>
+        </div>
+    </div>
+
+    <!-- Result -->
+    <div class="card" id="result-card">
+        <div class="section-label">Route Metrics</div>
+        <div class="result-grid">
+            <div class="metric">
+                <div class="metric-label">Distance</div>
+                <div class="metric-value" id="r-dist">—<span> km</span></div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Expected</div>
+                <div class="metric-value" id="r-exp">—<span> min</span></div>
+            </div>
+            <div class="metric" style="grid-column: span 2;">
+                <div class="metric-label">Time Range</div>
+                <div class="metric-value" id="r-range">—</div>
+                <div class="metric-sub" id="r-turns"></div>
+            </div>
+        </div>
+        <div id="r-mode"></div>
+    </div>
+
+    <!-- Removal Impact -->
+    <div class="card" id="removal-card">
+        <div class="removal-header">
+            <div class="removal-title">⚠ Edge Removal Impact</div>
+            <button class="removal-close" onclick="closeRemoval()">×</button>
+        </div>
+        <div id="removal-details"></div>
+    </div>
+
+    <!-- Legend -->
+    <div class="card" id="legend-card">
+        <div class="legend-title">Map Legend</div>
+        <div class="legend-items">
+            <div class="legend-item"><div class="legend-line" style="background:var(--green)"></div>Origin road</div>
+            <div class="legend-item"><div class="legend-line" style="background:var(--red)"></div>Destination road</div>
+            <div class="legend-item"><div class="legend-line" style="background:#3b82f6; height:5px"></div>Active route</div>
+            <div class="legend-item"><div class="legend-line" style="background:#000; border:1px dashed #555"></div>Blocked road</div>
+            <div class="legend-item"><div class="legend-line" style="background:#dc2626"></div>Heavy reroute gain</div>
+            <div class="legend-item"><div class="legend-line" style="background:#1d4ed8"></div>Heavy flow loss</div>
+            <div class="legend-item"><div class="legend-line" style="background:var(--purple)"></div>Newly congested</div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Loader ──────────────────────────────────────────────────────── -->
+<div id="loader">
+    <div class="spinner"></div>
+    <span id="loader-text">CALCULATING...</span>
+</div>
+
+<!-- ── Hint bar ────────────────────────────────────────────────────── -->
+<div id="hint"><em>Left-click</em> a road to select · <em>Right-click</em> to block/analyze removal</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+    // ── Map init ───────────────────────────────────────────────────────
+    var map = L.map('map', { zoomControl: true }).setView([28.4595, 77.0266], 13);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap, © CARTO',
+        maxZoom: 19
+    }).addTo(map);
+
+    // Reposition zoom control
+    map.zoomControl.setPosition('bottomright');
+
+    // ── State ──────────────────────────────────────────────────────────
+    var startEdge = null, endEdge = null;
+    var startLayer = null, endLayer = null;
+    var routeLayer = null, networkLayer = null;
+    var blockedEdges = new Set();
+    var step = 0; // 0=pick start, 1=pick end
+
+    // ── Helpers ────────────────────────────────────────────────────────
+    function showLoader(text) {
+        var el = document.getElementById('loader');
+        document.getElementById('loader-text').textContent = text || 'CALCULATING...';
+        el.style.display = 'flex';
+    }
+
+    function hideLoader() {
+        document.getElementById('loader').style.display = 'none';
+    }
+
+    function setHint(html) {
+        document.getElementById('hint').innerHTML = html;
+    }
+
+    function formatHour(h) {
+        return String(h).padStart(2,'0') + ':00';
+    }
+
+    // ── Hour slider ────────────────────────────────────────────────────
+    document.getElementById('hour').addEventListener('input', function(e) {
+        document.getElementById('hour-display').textContent = formatHour(parseInt(e.target.value));
+    });
+    document.getElementById('hour-display').textContent = formatHour(12);
+
+    // ── Load network ───────────────────────────────────────────────────
+    showLoader('LOADING NETWORK...');
+    fetch('/geojson').then(r => r.json()).then(data => {
+        hideLoader();
+
+        networkLayer = L.geoJSON(data, {
+            style: function(f) {
+                var vc = (f.properties.vc_ratio || [0])[12] || 0;
+                var color = vc > 0.8 ? '#ef4444'
+                          : vc > 0.5 ? '#f59e0b'
+                          : '#4b5563';
+                return { color, weight: 1.5, opacity: 0.5 };
+            },
+            onEachFeature: function(feature, layer) {
+
+                // ── Tooltip ────────────────────────────────────────────
+                var p = feature.properties;
+                var h = parseInt(document.getElementById('hour').value);
+                layer.bindTooltip(function() {
+                    var hr = parseInt(document.getElementById('hour').value);
+                    var tt = p.travel_time_s ? p.travel_time_s[hr] : null;
+                    var spd = p.speed_kmh ? p.speed_kmh[hr] : null;
+                    var vc = p.vc_ratio ? p.vc_ratio[hr] : null;
+                    return `<b>${p.id}</b><br>` +
+                        (p.road_type ? `Type: ${p.road_type}<br>` : '') +
+                        (tt  !== null ? `TT: ${tt.toFixed(1)}s<br>` : '') +
+                        (spd !== null ? `Speed: ${spd.toFixed(1)} km/h<br>` : '') +
+                        (vc  !== null ? `V/C: ${vc.toFixed(2)}<br>` : '') +
+                        `<span style="color:#6b7280;font-size:9px">Right-click to analyze removal</span>`;
+                }, { sticky: true });
+
+                // ── Right-click: block + removal analysis ──────────────
+                layer.on('contextmenu', function(e) {
+                    e.originalEvent.preventDefault();
+                    var eid = feature.properties.id;
+                    var hour = parseInt(document.getElementById('hour').value);
+
+                    if (blockedEdges.has(eid)) return;
+
+                    blockedEdges.add(eid);
+                    layer.setStyle({ color: '#ef4444', weight: 3, dashArray: '6,4', opacity: 0.9 });
+
+                    if (startEdge === eid) { startEdge = null; startLayer = null; updateWaypointUI(); }
+                    if (endEdge === eid)   { endEdge   = null; endLayer   = null; updateWaypointUI(); }
+
+                    showLoader('SIMULATING REMOVAL...');
+                    fetch(`/removal?edge=${encodeURIComponent(eid)}&hour=${hour}`)
+                        .then(r => r.json())
+                        .then(res => {
+                            hideLoader();
+                            if (res.error) return;
+
+                            // Dim background
+                            networkLayer.eachLayer(l => {
+                                if (!blockedEdges.has(l.feature?.properties?.id)) {
+                                    l.setStyle({ opacity: 0.12 });
+                                }
+                            });
+
+                            // Remove old removal layer
+                            if (window.removalLayer) map.removeLayer(window.removalLayer);
+
+                            window.removalLayer = L.geoJSON(res.delta_geojson, {
+                                style: function(f) {
+                                    var d = f.properties.delta_flow;
+                                    var isCongested = f.properties.congested;
+                                    if (isCongested) return { color: '#b06bff', weight: 6, opacity: 1 };
+                                    if (d > 100)  return { color: '#dc2626', weight: Math.min(3 + d/40, 8), opacity: 0.9 };
+                                    if (d > 10)   return { color: '#f87171', weight: Math.min(3 + d/60, 7), opacity: 0.85 };
+                                    if (d < -100) return { color: '#1d4ed8', weight: Math.min(3 + Math.abs(d)/40, 8), opacity: 0.9 };
+                                    if (d < -10)  return { color: '#60a5fa', weight: Math.min(3 + Math.abs(d)/60, 7), opacity: 0.85 };
+                                    return { opacity: 0 };
+                                },
+                                onEachFeature: function(f, l) {
+                                    l.bindTooltip(
+                                        `<b>${f.properties.edge_id}</b><br>` +
+                                        `Δ flow: ${f.properties.delta_flow > 0 ? '+' : ''}${f.properties.delta_flow.toFixed(0)} veh/h<br>` +
+                                        `${f.properties.flow_before.toFixed(0)} → ${f.properties.flow_after.toFixed(0)} veh/h<br>` +
+                                        (f.properties.congested ? `<span style="color:#b06bff">⚠ NEWLY CONGESTED</span>` : ''),
+                                        { sticky: true }
+                                    );
+                                }
+                            }).addTo(map);
+
+                            // Show removal panel
+                            showRemovalPanel(res);
+                        })
+                        .catch(hideLoader);
+                });
+
+                // ── Left-click: select start / end ────────────────────
+                layer.on('click', function() {
+                    if (blockedEdges.has(feature.properties.id)) return;
+
+                    if (!startEdge || (startEdge && endEdge)) {
+                        // Reset prev selection
+                        if (startLayer) networkLayer.resetStyle(startLayer);
+                        if (endLayer)   networkLayer.resetStyle(endLayer);
+                        if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+                        hideResultCard();
+
+                        startEdge  = feature.properties.id;
+                        startLayer = layer;
+                        endEdge    = null;
+                        endLayer   = null;
+                        layer.setStyle({ color: '#00e5a0', weight: 5, opacity: 1, dashArray: null });
+                        setHint('<em>Now click</em> a destination road · <em>Right-click</em> to block');
+                    } else {
+                        endEdge  = feature.properties.id;
+                        endLayer = layer;
+                        layer.setStyle({ color: '#ff4466', weight: 5, opacity: 1, dashArray: null });
+                        setHint('<em>Route ready</em> — click Find Route · or keep selecting');
+                    }
+
+                    updateWaypointUI();
+                });
+            }
+        }).addTo(map);
+
+        setHint('<em>Left-click</em> a road to select origin · <em>Right-click</em> to block/analyze');
+    }).catch(() => {
+        hideLoader();
+        setHint('⚠ Failed to load network data');
+    });
+
+    // ── UI updates ─────────────────────────────────────────────────────
+    function updateWaypointUI() {
+        var sl = document.getElementById('start-lbl');
+        var el = document.getElementById('end-lbl');
+
+        if (startEdge) {
+            sl.textContent = startEdge;
+            sl.classList.remove('none');
+        } else {
+            sl.textContent = 'Click a road to set origin';
+            sl.classList.add('none');
+        }
+
+        if (endEdge) {
+            el.textContent = endEdge;
+            el.classList.remove('none');
+        } else {
+            el.textContent = 'Click a road to set destination';
+            el.classList.add('none');
+        }
+    }
+
+    function hideResultCard() {
+        document.getElementById('result-card').style.display = 'none';
+    }
+
+    function showRemovalPanel(res) {
+        var card = document.getElementById('removal-card');
+        var det  = document.getElementById('removal-details');
+        card.style.display = 'block';
+
+        var congClass = res.n_newly_congested > 5 ? 'danger' : res.n_newly_congested > 0 ? 'warn' : 'ok';
+        var delayClass = res.total_delay_veh_h > 10 ? 'danger' : res.total_delay_veh_h > 2 ? 'warn' : 'ok';
+
+        det.innerHTML = `
+            <div class="impact-row">
+                <span class="impact-key">Displaced flow</span>
+                <span class="impact-val">${res.displaced_flow.toFixed(0)} veh/h</span>
+            </div>
+            <div class="impact-row">
+                <span class="impact-key">Rerouted via</span>
+                <span class="impact-val">${res.reroute_pct.toFixed(0)}% · ${res.paths.length} paths</span>
+            </div>
+            <div class="impact-row">
+                <span class="impact-key">New congestion</span>
+                <span class="impact-val ${congClass}">${res.n_newly_congested} edges</span>
+            </div>
+            <div class="impact-row">
+                <span class="impact-key">Extra delay</span>
+                <span class="impact-val ${delayClass}">${res.total_delay_veh_h.toFixed(2)} veh·h</span>
+            </div>`;
+    }
+
+    function closeRemoval() {
+        document.getElementById('removal-card').style.display = 'none';
+    }
+
+    // ── Restore ────────────────────────────────────────────────────────
+    function restoreEdges() {
+        blockedEdges.clear();
+        if (window.removalLayer) { map.removeLayer(window.removalLayer); window.removalLayer = null; }
+        closeRemoval();
+
+        if (networkLayer) networkLayer.eachLayer(l => networkLayer.resetStyle(l));
+        if (startLayer) startLayer.setStyle({ color: '#00e5a0', weight: 5, opacity: 1 });
+        if (endLayer)   endLayer.setStyle({ color: '#ff4466', weight: 5, opacity: 1 });
+
+        if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; hideResultCard(); }
+        setHint('<em>Left-click</em> a road to select · <em>Right-click</em> to block/analyze removal');
+    }
+
+    // ── Route ──────────────────────────────────────────────────────────
+    function calculateRoute() {
+        if (!startEdge || !endEdge) {
+            setHint('⚠ Select both an <em>origin</em> and <em>destination</em> road first');
+            return;
+        }
+
+        var hour = document.getElementById('hour').value;
+        var safeStart   = encodeURIComponent(startEdge);
+        var safeEnd     = encodeURIComponent(endEdge);
+        var safeBlocked = Array.from(blockedEdges).map(encodeURIComponent).join(',');
+        var url = `/route?start=${safeStart}&end=${safeEnd}&hour=${hour}&blocked=${safeBlocked}`;
+
+        showLoader('ROUTING...');
+
+        fetch(url).then(r => r.json()).then(res => {
+            hideLoader();
+
+            if (res.error) {
+                setHint(`⚠ ${res.error}`);
+                return;
+            }
+
+            if (routeLayer) map.removeLayer(routeLayer);
+
+            routeLayer = L.geoJSON(res.geometry, {
+                style: { color: '#3b82f6', weight: 6, opacity: 0.9 }
+            }).addTo(map);
+            map.fitBounds(routeLayer.getBounds(), { padding: [60, 60] });
+
+            // Populate result card
+            var minT = (res.time_range_s[0] / 60).toFixed(1);
+            var maxT = (res.time_range_s[1] / 60).toFixed(1);
+            var expT = (res.time_expected_s  / 60).toFixed(1);
+            var dist = (res.dist_m / 1000).toFixed(2);
+
+            document.getElementById('r-dist').innerHTML = `${dist}<span> km</span>`;
+            document.getElementById('r-exp').innerHTML  = `${expT}<span> min</span>`;
+            document.getElementById('r-range').innerHTML = `${minT}<span> – </span>${maxT}<span> min</span>`;
+
+            var turns = res.n_turns !== undefined ? `${res.n_turns} turns · ${(res.turn_time_s||0).toFixed(0)}s turn cost` : '';
+            document.getElementById('r-turns').textContent = turns;
+
+            var isMovement = res.routing_mode === 'movement_graph';
+            document.getElementById('r-mode').innerHTML = `
+                <div class="routing-badge ${isMovement ? 'movement' : 'fallback'}">
+                    <div class="badge-dot"></div>
+                    ${isMovement ? 'MOVEMENT-AWARE ROUTING' : 'NX FALLBACK ROUTING'}
+                </div>`;
+
+            document.getElementById('result-card').style.display = 'block';
+            setHint('Route calculated · <em>Right-click</em> roads to simulate closures');
+        }).catch(() => {
+            hideLoader();
+            setHint('⚠ Routing failed — check server connection');
+        });
+    }
+</script>
+</body>
+</html>
