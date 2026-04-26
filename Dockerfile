@@ -20,4 +20,4 @@ RUN mkdir -p outputs/graph_reconstruction outputs/networks
 
 EXPOSE 7860
 
-CMD ["sh", "-c", "python download_data.py && gunicorn route_app:app --workers 1 --timeout 300 --bind 0.0.0.0:7860"]
+CMD ["sh", "-c", "python download_data.py && gunicorn app:app --workers 1 --timeout 300 --bind 0.0.0.0:7860"]
