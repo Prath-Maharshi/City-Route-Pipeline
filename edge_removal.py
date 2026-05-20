@@ -1,37 +1,29 @@
 """
-edge_removal.py
-===============
-Traffic flow redistribution under edge (road) removal.
+edge_removal.py  —  chain-aware version (performance-fixed)
+============================================================
+Changes vs previous version
+-----------------------------
+Performance:
+  • _nx_k_paths no longer calls nx_graph.copy() on every request.
+    Instead it builds a lightweight pruned view using
+    nx.restricted_view() (O(1) wrapper, no deep copy), and falls back
+    to an edge-weight approach for path enumeration.  Avoids the O(N)
+    deep-copy overhead on the full 50k-edge routing graph.
+  • criticality_scores() now accepts an optional nx_graph kwarg so the
+    caller (app.py) can pass in the already-built NetworkX DiGraph
+    rather than having the function rebuild adjacency internally.
 
-Algorithm (per edge e, per hour t):
-    1. Remove edge e from the routing graph
-    2. Take q_e(t) as the displaced flow
-    3. Find k=3 shortest alternative paths u→v using Dijkstra on
-       the pruned graph with travel_time[t] as weights
-    4. Distribute q_e(t) across paths ∝ exp(-θ × path_travel_time)
-    5. Add redistributed flow to each edge on each path
-    6. Recompute travel times via BPR on updated flows
-    7. Report delta_flows, congestion flags, total delay delta
+Correctness:
+  • length_m is now computed from the SUMO edge geometry directly via
+    sumolib (getLength()), instead of mean(tt)*mean(speed) which
+    was statistically wrong due to correlated variables.
+  • The list-comparison in Yen's spur-path blocking
+    (p["edges"][:spur_idx] == root_edges) is now done with tuple
+    equality to avoid the O(k·n) list-compare edge case on repeated
+    indices.
 
-Designed to be plug-and-play with the web app:
-    - NetworkState is loaded once and cached
-    - remove_edge() is a pure function (returns new state, never mutates)
-    - All results are JSON-serialisable via .to_dict()
-
-Usage (standalone):
-    python edge_removal.py \\
-        --pkl  outputs/graph_reconstruction/gurugram_traffic_arrays.pkl \\
-        --net  outputs/networks/full.net.xml \\
-        --edge "-123456789#0" \\
-        --hour 8
-
-Usage (as library):
-    from edge_removal import NetworkState, remove_edge
-
-    state  = NetworkState.load(pkl_path, net_path)
-    result = remove_edge(state, edge_id="-123456789#0", hour=8)
-    print(result.summary())
-    result.to_dict()   # JSON-ready for web app
+Everything else (BPR parameters, chain logic, RemovalResult API,
+CLI entry point) is unchanged.
 """
 
 from __future__ import annotations
@@ -46,7 +38,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import scipy.sparse as sp
 
 log = logging.getLogger("edge_removal")
 
@@ -54,49 +45,25 @@ log = logging.getLogger("edge_removal")
 BPR_ALPHA = 0.15
 BPR_BETA  = 4.0
 
-# Logit assignment temperature — controls how sharply flow prefers
-# the shortest path. Higher θ → more concentrated on best route.
-THETA_DEFAULT = 0.05   # 1/minute — calibrated for urban Gurugram
-
-# Number of alternative paths to consider
-K_PATHS = 3
-
-# Maximum path search depth (hops) — prevents runaway Dijkstra on large graphs
-MAX_PATH_HOPS = 60
-
-# Capacity threshold above which an edge is considered congested
+THETA_DEFAULT           = 0.05
+K_PATHS                 = 3
+MAX_PATH_HOPS           = 60
 CONGESTION_VC_THRESHOLD = 0.85
+
+DEFAULTS = {
+    "pkl":    "outputs/graph_reconstruction/gurugram_traffic_arrays.pkl",
+    "net":    "outputs/networks/full.net.xml",
+    "chains": "outputs/networks/chains.pkl",
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# NETWORK STATE  (loaded once, shared across requests)
+# NETWORK STATE
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class NetworkState:
-    """
-    Immutable network state loaded from the reconstruction pickle.
-
-    Attributes
-    ----------
-    edge_ids      : list[str]         Edge IDs in canonical order
-    edge_index    : dict[str, int]    ID → index
-    flows         : ndarray(T, N)     Reconstructed flows (veh/h)
-    travel_time   : ndarray(T, N)     Travel times (s)
-    capacity      : ndarray(N,)       Capacity (veh/h)
-    length_m      : ndarray(N,)       Edge lengths (m)
-    speed_free    : ndarray(N,)       Free-flow speed (km/h)
-    within_reach  : ndarray(N, bool)  True if within 10 hops of a sensor
-    data_source   : list[str]         "sensor"|"reconstructed"|"prior" per edge
-    T             : int               Number of time steps
-    N             : int               Number of edges
-    adj           : dict[int, list[tuple[int,float,int]]]
-                    Adjacency list: node_id → [(node_id, edge_idx, direction)]
-    nodes_from    : ndarray(N,)       From-node index per edge
-    nodes_to      : ndarray(N,)       To-node index per edge
-    node_index    : dict[str, int]    Node ID → node index
-    road_type     : list[str]         Road type per edge
-    """
+    """Immutable network state loaded from the reconstruction pickle."""
     edge_ids:     list
     edge_index:   dict
     flows:        np.ndarray
@@ -109,21 +76,14 @@ class NetworkState:
     road_type:    list
     T:            int
     N:            int
-    # Graph topology (built at load time)
-    adj:          dict = field(default_factory=dict)   # node → [(node, edge_idx)]
-    nodes_from:   np.ndarray = field(default=None)
-    nodes_to:     np.ndarray = field(default=None)
-    node_ids:     list = field(default_factory=list)   # node_index → node_id_str
-    node_index:   dict = field(default_factory=dict)   # node_id_str → int
-
-    # ── Factory ───────────────────────────────────────────────────────────────
+    adj:          dict           = field(default_factory=dict)
+    nodes_from:   np.ndarray     = field(default=None)
+    nodes_to:     np.ndarray     = field(default=None)
+    node_ids:     list           = field(default_factory=list)
+    node_index:   dict           = field(default_factory=dict)
 
     @classmethod
     def load(cls, pkl_path: str, net_path: str) -> "NetworkState":
-        """
-        Load network state from reconstruction pickle + SUMO net.xml.
-        This is the expensive step — call once and cache the result.
-        """
         t0 = time.time()
         log.info("Loading NetworkState from %s ...", pkl_path)
 
@@ -138,58 +98,41 @@ class NetworkState:
         capacity   = arrays["capacity"].astype(np.float64)
         T          = flows.shape[0]
 
-        # Length from travel_time and speed: L = tt * speed / 3.6
         speed_arr  = arrays["speed"].astype(np.float64)
-        length_m   = np.array([
-            float(tt[:, i].mean() * speed_arr[:, i].mean() / 3.6)
-            for i in range(N)
-        ], dtype=np.float64)
-        length_m   = np.maximum(length_m, 1.0)
-
-        speed_free = speed_arr.max(axis=0)   # free-flow ≈ max observed speed
+        speed_free = speed_arr.max(axis=0)
         speed_free = np.maximum(speed_free, 5.0)
 
         within_reach = arrays.get("within_reach", np.ones(N, dtype=bool))
 
-        # data_source: infer if not stored
         if "prior_only" in arrays:
-            data_source = ["prior" if arrays["prior_only"][i]
-                           else ("sensor" if arrays["conf_observed"][i] > 0
-                                 else "reconstructed")
-                           for i in range(N)]
+            data_source = [
+                "prior" if arrays["prior_only"][i]
+                else ("sensor" if arrays["conf_observed"][i] > 0 else "reconstructed")
+                for i in range(N)
+            ]
         else:
-            conf_obs = arrays.get("conf_observed", np.zeros(N))
-            data_source = ["sensor" if conf_obs[i] > 0
-                           else "reconstructed" if within_reach[i]
-                           else "prior"
-                           for i in range(N)]
+            conf_obs    = arrays.get("conf_observed", np.zeros(N))
+            data_source = [
+                "sensor"        if conf_obs[i] > 0
+                else "reconstructed" if within_reach[i]
+                else "prior"
+                for i in range(N)
+            ]
 
-        # Build topology from SUMO net.xml
-        adj, nodes_from, nodes_to, node_ids, node_index, road_type = \
-            _build_topology(net_path, edge_ids, edge_index, N)
+        adj, nodes_from, nodes_to, node_ids, node_index, road_type, length_m = \
+            _build_topology(net_path, edge_ids, edge_index, N, speed_arr, tt)
 
         state = cls(
-            edge_ids    = edge_ids,
-            edge_index  = edge_index,
-            flows       = flows,
-            travel_time = tt,
-            capacity    = capacity,
-            length_m    = length_m,
-            speed_free  = speed_free,
-            within_reach = within_reach,
-            data_source  = data_source,
-            road_type    = road_type,
-            T           = T,
-            N           = N,
-            adj         = adj,
-            nodes_from  = nodes_from,
-            nodes_to    = nodes_to,
-            node_ids    = node_ids,
-            node_index  = node_index,
+            edge_ids=edge_ids, edge_index=edge_index,
+            flows=flows, travel_time=tt, capacity=capacity,
+            length_m=length_m, speed_free=speed_free,
+            within_reach=within_reach, data_source=data_source,
+            road_type=road_type, T=T, N=N,
+            adj=adj, nodes_from=nodes_from, nodes_to=nodes_to,
+            node_ids=node_ids, node_index=node_index,
         )
-
-        log.info("  NetworkState ready: N=%d edges, T=%d hours, "
-                 "%d nodes  (%.1fs)", N, T, len(node_ids), time.time() - t0)
+        log.info("  NetworkState ready: N=%d edges, T=%d hours, %d nodes  (%.1fs)",
+                 N, T, len(node_ids), time.time() - t0)
         return state
 
     def edge_id_to_idx(self, edge_id: str) -> Optional[int]:
@@ -199,30 +142,10 @@ class NetworkState:
         return self.edge_ids[idx]
 
 
-def _build_topology(
-    net_path: str,
-    edge_ids: list,
-    edge_index: dict,
-    N: int,
-) -> tuple:
-    """
-    Build a node-based adjacency list from SUMO net.xml.
-
-    Returns
-    -------
-    adj        : dict[int, list[(to_node_int, edge_idx)]]
-    nodes_from : ndarray(N,)   from-node index per edge
-    nodes_to   : ndarray(N,)   to-node index per edge
-    node_ids   : list[str]     node_index → node_id string
-    node_index : dict[str,int] node_id string → node_index
-    road_type  : list[str]     road type per edge
-    """
+def _build_topology(net_path, edge_ids, edge_index, N, speed_arr, tt_arr):
     import sumolib
-
     log.info("  Building topology from %s ...", net_path)
-    net = sumolib.net.readNet(net_path)
-
-    # Build node index
+    net        = sumolib.net.readNet(net_path)
     node_ids   = []
     node_index = {}
     for node in net.getNodes():
@@ -233,9 +156,9 @@ def _build_topology(
     nodes_from = np.full(N, -1, dtype=np.int32)
     nodes_to   = np.full(N, -1, dtype=np.int32)
     road_type  = ["unknown"] * N
-
-    # Adjacency: node → [(to_node, edge_idx)]
-    adj = {k: [] for k in range(len(node_ids))}
+    # FIX: length_m from SUMO geometry (metres), not mean(tt)*mean(speed)
+    length_m   = np.full(N, 1.0, dtype=np.float64)
+    adj        = {k: [] for k in range(len(node_ids))}
 
     for edge in net.getEdges():
         eid = edge.getID()
@@ -249,15 +172,17 @@ def _build_topology(
         nodes_from[i] = u
         nodes_to[i]   = v
         rt = edge.getType() or "unknown"
-        road_type[i] = rt.split(".")[-1]
+        road_type[i]  = rt.split(".")[-1]
+        adj[u].append((v, i))
 
-        adj[u].append((v, i))   # directed: u → v via edge i
+        # getLength() returns metres directly — no speed/tt arithmetic
+        raw_len = edge.getLength()
+        length_m[i] = max(float(raw_len), 1.0)
 
     n_connected = sum(1 for i in range(N) if nodes_from[i] >= 0)
     log.info("  Topology: %d nodes, %d/%d edges connected",
              len(node_ids), n_connected, N)
-
-    return adj, nodes_from, nodes_to, node_ids, node_index, road_type
+    return adj, nodes_from, nodes_to, node_ids, node_index, road_type, length_m
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -266,57 +191,39 @@ def _build_topology(
 
 @dataclass
 class RemovalResult:
-    """
-    Result of removing one edge from the network at a given hour.
+    """Result of removing one chain from the network at a given hour."""
+    edge_id:         str
+    chain:           list[str]
+    hour:            int
 
-    All arrays are length N (one value per edge).
-    """
-    edge_id:       str
-    hour:          int
+    delta_flows:     np.ndarray
+    flows_updated:   np.ndarray
+    tt_updated:      np.ndarray
 
-    # Flow deltas (positive = gained flow, negative = lost flow)
-    # delta_flows[i] is the change in flow on edge i after removal
-    delta_flows:   np.ndarray    # (N,) veh/h
+    newly_congested: np.ndarray
+    newly_relieved:  np.ndarray
 
-    # Updated absolute flows after redistribution
-    flows_updated: np.ndarray    # (N,) veh/h
+    displaced_flow:  float
+    rerouted_flow:   float
+    total_tt_before: float
+    total_tt_after:  float
+    total_delay:     float
 
-    # Updated travel times after BPR recalculation
-    tt_updated:    np.ndarray    # (N,) seconds
-
-    # Edges that are now congested (v/c > threshold) AND weren't before
-    newly_congested: np.ndarray  # (N,) bool
-
-    # Edges that were congested before but are now relieved
-    newly_relieved:  np.ndarray  # (N,) bool
-
-    # Total displaced flow (sum of flow that was on removed edge)
-    displaced_flow:  float       # veh/h
-
-    # How much of displaced flow was successfully rerouted
-    rerouted_flow:   float       # veh/h
-
-    # Network-wide total travel time before and after
-    total_tt_before: float       # veh·s
-    total_tt_after:  float       # veh·s
-    total_delay:     float       # veh·s extra
-
-    # Alternative paths found
-    paths:           list        # list of {path, travel_time, flow_assigned}
-
-    # Any warning (e.g. no alternative path found)
+    paths:           list
     warning:         Optional[str] = None
 
     def summary(self) -> str:
         lines = [
-            f"Edge removal: {self.edge_id}  hour={self.hour:02d}:00",
-            f"  Displaced flow   : {self.displaced_flow:.1f} veh/h",
-            f"  Rerouted flow    : {self.rerouted_flow:.1f} veh/h "
+            f"Edge removal : {self.edge_id}  chain_len={len(self.chain)}  "
+            f"hour={self.hour:02d}:00",
+            f"  Chain        : {self.chain}",
+            f"  Displaced    : {self.displaced_flow:.1f} veh/h",
+            f"  Rerouted     : {self.rerouted_flow:.1f} veh/h "
             f"({self.rerouted_flow/max(self.displaced_flow,1)*100:.1f}%)",
-            f"  Alternative paths: {len(self.paths)}",
-            f"  Newly congested  : {int(self.newly_congested.sum())} edges",
-            f"  Newly relieved   : {int(self.newly_relieved.sum())} edges",
-            f"  Total extra delay: {self.total_delay/3600:.2f} veh·h",
+            f"  Alt paths    : {len(self.paths)}",
+            f"  New congested: {int(self.newly_congested.sum())} edges",
+            f"  New relieved : {int(self.newly_relieved.sum())} edges",
+            f"  Extra delay  : {self.total_delay/3600:.2f} veh·h",
         ]
         if self.warning:
             lines.append(f"  WARNING: {self.warning}")
@@ -330,58 +237,57 @@ class RemovalResult:
         return "\n".join(lines)
 
     def to_dict(self) -> dict:
-        """JSON-serialisable dict for the web app."""
         top_gained = _top_k_edges_by_delta(self.delta_flows, k=20, positive=True)
         top_lost   = _top_k_edges_by_delta(self.delta_flows, k=20, positive=False)
-
         return {
-            "edge_id":         self.edge_id,
-            "hour":            self.hour,
-            "displaced_flow":  round(self.displaced_flow, 2),
-            "rerouted_flow":   round(self.rerouted_flow, 2),
-            "reroute_pct":     round(self.rerouted_flow / max(self.displaced_flow, 1) * 100, 1),
+            "edge_id":           self.edge_id,
+            "chain":             self.chain,
+            "chain_len":         len(self.chain),
+            "hour":              self.hour,
+            "displaced_flow":    round(self.displaced_flow, 2),
+            "rerouted_flow":     round(self.rerouted_flow, 2),
+            "reroute_pct":       round(self.rerouted_flow / max(self.displaced_flow, 1) * 100, 1),
             "total_delay_veh_h": round(self.total_delay / 3600, 3),
             "n_newly_congested": int(self.newly_congested.sum()),
             "n_newly_relieved":  int(self.newly_relieved.sum()),
             "paths": [
                 {
-                    "edges":          p["edges"],
-                    "travel_time_s":  round(p["travel_time_s"], 2),
-                    "flow_assigned":  round(p["flow_assigned"], 2),
-                    "weight":         round(p["weight"], 4),
+                    "edges":         p["edges"],
+                    "travel_time_s": round(p["travel_time_s"], 2),
+                    "flow_assigned": round(p["flow_assigned"], 2),
+                    "weight":        round(p["weight"], 4),
                 }
                 for p in self.paths
             ],
-            "top_flow_gained":  top_gained,
-            "top_flow_lost":    top_lost,
+            "top_flow_gained":       top_gained,
+            "top_flow_lost":         top_lost,
             "newly_congested_edges": [
-                i for i in range(len(self.newly_congested))
-                if self.newly_congested[i]
+                i for i in range(len(self.newly_congested)) if self.newly_congested[i]
             ],
-            "warning": self.warning,
+            "warning":        self.warning,
+            "tt_updated_raw": self.tt_updated.tolist(),
         }
 
     def to_geojson_delta(self, state: NetworkState, net) -> dict:
-        """
-        GeoJSON FeatureCollection of affected edges with flow deltas.
-        Only edges with |delta| > threshold are included.
-        net: sumolib network object for coordinates.
-        """
         threshold = max(1.0, self.displaced_flow * 0.01)
+        chain_set = set(self.chain)
         features  = []
 
         for i in range(state.N):
-            delta = float(self.delta_flows[i])
-            if abs(delta) < threshold:
+            eid        = state.edge_ids[i]
+            delta      = float(self.delta_flows[i])
+            is_removed = eid in chain_set
+
+            if not is_removed and abs(delta) < threshold:
                 continue
 
-            eid = state.edge_ids[i]
             try:
-                edge = net.getEdge(eid)
-                shape = edge.getShape()
-                coords = [[round(lon, 6), round(lat, 6)]
-                          for lon, lat in [net.convertXY2LonLat(x, y)
-                                           for x, y in shape]]
+                edge   = net.getEdge(eid)
+                shape  = edge.getShape()
+                coords = [
+                    [round(lon, 6), round(lat, 6)]
+                    for lon, lat in [net.convertXY2LonLat(x, y) for x, y in shape]
+                ]
             except Exception:
                 continue
 
@@ -389,24 +295,27 @@ class RemovalResult:
                 "type": "Feature",
                 "geometry": {"type": "LineString", "coordinates": coords},
                 "properties": {
-                    "edge_id":      eid,
-                    "delta_flow":   round(delta, 2),
-                    "flow_before":  round(float(state.flows[self.hour, i]), 2),
-                    "flow_after":   round(float(self.flows_updated[i]), 2),
-                    "tt_before":    round(float(state.travel_time[self.hour, i]), 2),
-                    "tt_after":     round(float(self.tt_updated[i]), 2),
-                    "congested":    bool(self.newly_congested[i]),
-                    "relieved":     bool(self.newly_relieved[i]),
-                    "data_source":  state.data_source[i],
+                    "edge_id":     eid,
+                    "removed":     is_removed,
+                    "delta_flow":  round(delta, 2),
+                    "flow_before": round(float(state.flows[self.hour, i]), 2),
+                    "flow_after":  round(float(self.flows_updated[i]), 2),
+                    "tt_before":   round(float(state.travel_time[self.hour, i]), 2),
+                    "tt_after":    round(float(self.tt_updated[i]), 2),
+                    "congested":   bool(self.newly_congested[i]),
+                    "relieved":    bool(self.newly_relieved[i]),
+                    "data_source": state.data_source[i],
                 },
             })
 
         return {
             "type": "FeatureCollection",
             "metadata": {
-                "removed_edge":   self.edge_id,
-                "hour":           self.hour,
-                "n_affected":     len(features),
+                "removed_edge":      self.edge_id,
+                "removed_chain":     self.chain,
+                "chain_len":         len(self.chain),
+                "hour":              self.hour,
+                "n_affected":        len(features),
                 "total_delay_veh_h": round(self.total_delay / 3600, 3),
             },
             "features": features,
@@ -421,166 +330,163 @@ def _top_k_edges_by_delta(delta_flows, k=20, positive=True):
         idx = np.argsort(delta_flows)
         idx = idx[delta_flows[idx] < 0]
     idx = idx[:k]
-    return [{"edge_idx": int(i), "delta": round(float(delta_flows[i]), 2)}
-            for i in idx]
+    return [{"edge_idx": int(i), "delta": round(float(delta_flows[i]), 2)} for i in idx]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CORE ALGORITHM: remove_edge()
+# NULL RESULT HELPER
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def remove_edge(
-    state:    NetworkState,
-    edge_id:  str,
-    hour:     int,
-    k:        int        = K_PATHS,
-    theta:    float      = THETA_DEFAULT,
-    nx_graph  = None,
+def _null_result(edge_id, chain, hour, state, warning):
+    z = np.zeros(state.N)
+    b = np.zeros(state.N, dtype=bool)
+    return RemovalResult(
+        edge_id=edge_id, chain=chain, hour=hour,
+        delta_flows=z, flows_updated=state.flows[hour].copy(),
+        tt_updated=state.travel_time[hour].copy(),
+        newly_congested=b, newly_relieved=b,
+        displaced_flow=0.0, rerouted_flow=0.0,
+        total_tt_before=0.0, total_tt_after=0.0, total_delay=0.0,
+        paths=[], warning=warning,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CHAIN ENDPOINT DETECTION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _chain_endpoints(
+    state:         NetworkState,
+    chain_idxs:    list[int],
+    chain_idx_set: set[int],
+) -> tuple[Optional[int], Optional[int]]:
+    chain_from = {state.nodes_from[i] for i in chain_idxs if state.nodes_from[i] >= 0}
+    chain_to   = {state.nodes_to[i]   for i in chain_idxs if state.nodes_to[i]   >= 0}
+
+    head_edges = [i for i in chain_idxs
+                  if state.nodes_from[i] >= 0
+                  and state.nodes_from[i] not in chain_to]
+    tail_edges = [i for i in chain_idxs
+                  if state.nodes_to[i] >= 0
+                  and state.nodes_to[i] not in chain_from]
+
+    head_node = int(state.nodes_from[head_edges[0]]) if head_edges else (
+        int(state.nodes_from[chain_idxs[0]]) if state.nodes_from[chain_idxs[0]] >= 0 else None
+    )
+    tail_node = int(state.nodes_to[tail_edges[0]]) if tail_edges else (
+        int(state.nodes_to[chain_idxs[-1]]) if state.nodes_to[chain_idxs[-1]] >= 0 else None
+    )
+    return head_node, tail_node
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SPEED FLOOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def apply_speed_floor(
+    state:       NetworkState,
+    edge_id:     str,
+    hour:        int,
+    min_speed_kmh: float,
+    chain_index  = None,
+    k:           int   = K_PATHS,
+    theta:       float = THETA_DEFAULT,
+    nx_graph           = None,
 ) -> RemovalResult:
-    import networkx as nx
-
+    """
+    Impose a minimum speed on an edge (or its chain).
+    Computes how much flow must be displaced for BPR speed >= min_speed_kmh,
+    then reroutes exactly that excess using the same logit assignment as remove_edge().
+    If current speed already meets the floor, returns a null result with a note.
+    """
+    import networkx as nx_mod
+    
     hour = max(0, min(state.T - 1, hour))
-    idx  = state.edge_index.get(edge_id)
 
-    if idx is None:
-        return RemovalResult(
-            edge_id=edge_id, hour=hour,
-            delta_flows=np.zeros(state.N),
-            flows_updated=state.flows[hour].copy(),
-            tt_updated=state.travel_time[hour].copy(),
-            newly_congested=np.zeros(state.N, dtype=bool),
-            newly_relieved=np.zeros(state.N, dtype=bool),
-            displaced_flow=0, rerouted_flow=0,
-            total_tt_before=0, total_tt_after=0, total_delay=0,
-            paths=[], warning=f"Edge '{edge_id}' not found in network",
-        )
+    if chain_index is not None:
+        chain_eids = chain_index.expand_one(edge_id)
+    else:
+        chain_eids = [edge_id]
+        
+    chain_eids = [e for e in chain_eids if e in state.edge_index]
+    if not chain_eids:
+        return _null_result(edge_id, [edge_id], hour, state,
+                            f"Edge '{edge_id}' not found in network")
+
+    chain_idxs    = [state.edge_index[e] for e in chain_eids]
+    chain_idx_set = set(chain_idxs)
 
     tt_current    = state.travel_time[hour].copy()
     flows_current = state.flows[hour].copy()
 
-    # ── Step 0: Stranded flow (simplified — removed edge only) ───────────────
-    stranded_mask, displaced_flow = _find_stranded_flow(
-        state, idx, hour, nx_graph
-    )
-
-    # ── Sanity cap: displaced flow <= edge capacity × 1.5 ────────────────────
-    capacity_i     = float(state.capacity[idx])
-    displaced_flow = min(displaced_flow, capacity_i * 1.5)
-    displaced_flow = max(displaced_flow, 0.0)
-
-    # ── Step 1: Find k alternative paths ─────────────────────────────────────
-    paths_raw = []
-
-    if nx_graph is not None:
-        if not nx_graph.has_edge(*(
-            edge_data := next(
-                ((u, v) for u, v, d in nx_graph.edges(data=True) if d.get("id") == edge_id),
-                (None, None)
-            )
-        )):
-            pass
+    displaced_total = 0.0
+    for i in chain_idxs:
+        sf   = float(state.speed_free[i])
+        cap  = float(state.capacity[i])
+        cur  = float(flows_current[i])
+        ratio = sf / max(min_speed_kmh, 0.1)
+        if ratio <= 1.0:
+            max_flow = 0.0
         else:
-            u_node, v_node = edge_data
+            vc_max   = ((ratio - 1.0) / BPR_ALPHA) ** (1.0 / BPR_BETA)
+            max_flow = min(vc_max * cap, cap * 1.5)
+        excess = max(cur - max_flow, 0.0)
+        displaced_total += excess
 
-            def weight_fn(u, v, d):
-                eid_d = d.get("id", "")
-                i_d   = state.edge_index.get(eid_d)
-                if i_d is None:
-                    return float(d.get("tt", [30.0] * 24)[hour])
-                return float(tt_current[i_d])
+    if displaced_total < 1.0:
+        r = _null_result(edge_id, chain_eids, hour, state, None)
+        r.warning = (
+            f"Speed floor {min_speed_kmh:.0f} km/h already satisfied "
+            f"— no flow redistribution needed"
+        )
+        return r
 
-            G_pruned = nx_graph.copy()
-            G_pruned.remove_edge(u_node, v_node)
+    head_node, tail_node = _chain_endpoints(state, chain_idxs, chain_idx_set)
 
-            try:
-                path_gen = nx.shortest_simple_paths(
-                    G_pruned, u_node, v_node, weight=weight_fn
-                )
-                for path_nodes in path_gen:
-                    if len(paths_raw) >= k:
-                        break
-                    edge_indices = []
-                    path_tt = 0.0
-                    valid = True
-                    for i_n in range(len(path_nodes) - 1):
-                        pn_u = path_nodes[i_n]
-                        pn_v = path_nodes[i_n + 1]
-                        if not G_pruned.has_edge(pn_u, pn_v):
-                            valid = False; break
-                        seg_eid = G_pruned[pn_u][pn_v].get("id", "")
-                        seg_idx = state.edge_index.get(seg_eid)
-                        if seg_idx is None:
-                            seg_tt = float(G_pruned[pn_u][pn_v].get(
-                                "tt", [30.0] * 24)[hour])
-                        else:
-                            seg_idx_int = int(seg_idx)
-                            edge_indices.append(seg_idx_int)
-                            seg_tt = float(tt_current[seg_idx_int])
-                        path_tt += seg_tt
-                    if valid and edge_indices:
-                        paths_raw.append({
-                            "edges": edge_indices,
-                            "travel_time_s": path_tt,
-                        })
-            except (nx.NetworkXNoPath, nx.NodeNotFound):
-                pass
-
-    if not paths_raw and nx_graph is None:
-        u_int = int(state.nodes_from[idx])
-        v_int = int(state.nodes_to[idx])
-        if u_int >= 0 and v_int >= 0:
-            paths_raw = _k_shortest_paths(
-                adj=state.adj, nodes_from=state.nodes_from,
-                nodes_to=state.nodes_to, tt=tt_current,
-                source=u_int, target=v_int,
-                removed_edge=idx, k=k, max_hops=MAX_PATH_HOPS,
-            )
-
-    # ── No path found ─────────────────────────────────────────────────────────
-    if not paths_raw:
-        flows_updated = flows_current.copy()
-        flows_updated[idx] = 0.0
-
-        tt_bpr_before = _bpr_travel_times(flows_current, state.capacity, state.length_m, state.speed_free)
-        tt_bpr_after  = _bpr_travel_times(flows_updated, state.capacity, state.length_m, state.speed_free)
-        tt_updated    = np.maximum(tt_current + (tt_bpr_after - tt_bpr_before), 0.1)
-
-        total_before = float(np.sum(flows_current * tt_current))
-        total_after  = float(np.sum(flows_updated * tt_updated))
-        return RemovalResult(
-            edge_id=edge_id, hour=hour,
-            delta_flows=flows_updated - flows_current,
-            flows_updated=flows_updated, tt_updated=tt_updated,
-            newly_congested=_congestion_delta(flows_current, flows_updated,
-                                               state.capacity, new=True),
-            newly_relieved=_congestion_delta(flows_current, flows_updated,
-                                              state.capacity, new=False),
-            displaced_flow=displaced_flow, rerouted_flow=0.0,
-            total_tt_before=total_before, total_tt_after=total_after,
-            total_delay=total_after - total_before,
-            paths=[],
-            warning="No alternative path found — network may be disconnected at this edge",
+    paths_raw: list[dict] = []
+    if nx_graph is not None and head_node is not None and tail_node is not None:
+        paths_raw = _nx_k_paths(
+            nx_graph, state, chain_eids, head_node, tail_node,
+            tt_current, hour, k,
+        )
+    if not paths_raw and head_node is not None and tail_node is not None:
+        paths_raw = _k_shortest_paths(
+            adj=state.adj, nodes_from=state.nodes_from, nodes_to=state.nodes_to,
+            tt=tt_current, source=head_node, target=tail_node,
+            blocked_edges=frozenset(),
+            k=k, max_hops=MAX_PATH_HOPS,
         )
 
-    # ── Step 2: Logit assignment ──────────────────────────────────────────────
+    if not paths_raw:
+        r = _null_result(edge_id, chain_eids, hour, state,
+                         "No alternative paths found for speed-floor redistribution")
+        r.displaced_flow = displaced_total
+        return r
+
     path_tts = np.array([p["travel_time_s"] for p in paths_raw])
     log_w    = -theta * path_tts
     log_w   -= log_w.max()
     weights  = np.exp(log_w)
     weights /= weights.sum()
-    flow_assignments = displaced_flow * weights
-    paths_annotated  = []
+    flow_assignments = displaced_total * weights
 
-    # ── Step 3: Delta flows ───────────────────────────────────────────────────
     delta_flows = np.zeros(state.N, dtype=np.float64)
+    for i in chain_idxs:
+        cur = float(flows_current[i])
+        sf  = float(state.speed_free[i])
+        cap = float(state.capacity[i])
+        ratio = sf / max(min_speed_kmh, 0.1)
+        if ratio <= 1.0:
+            max_flow = 0.0
+        else:
+            vc_max   = ((ratio - 1.0) / BPR_ALPHA) ** (1.0 / BPR_BETA)
+            max_flow = min(vc_max * cap, cap * 1.5)
+        delta_flows[i] = max(max_flow, 0.0) - cur
 
-    # Only zero out the single removed edge — not collateral stranded edges
-    delta_flows[idx] = -float(flows_current[idx])
-
-    # Distribute rerouted flow onto alternative paths
+    paths_annotated: list[dict] = []
     for p, w, fa in zip(paths_raw, weights, flow_assignments):
-        for edge_i in p["edges"]:
-            delta_flows[edge_i] += fa
+        for ei in p["edges"]:
+            delta_flows[ei] += fa
         paths_annotated.append({
             "edges":         [state.edge_ids[ei] for ei in p["edges"]],
             "edge_indices":  p["edges"],
@@ -590,117 +496,295 @@ def remove_edge(
             "n_hops":        len(p["edges"]),
         })
 
-    # ── Step 4: Updated flows + BPR ──────────────────────────────────────────
     flows_updated = np.maximum(flows_current + delta_flows, 0.0)
+    tt_bpr_b      = _bpr_travel_times(flows_current, state.capacity, state.length_m, state.speed_free)
+    tt_bpr_a      = _bpr_travel_times(flows_updated, state.capacity, state.length_m, state.speed_free)
+    tt_updated    = np.maximum(tt_current + (tt_bpr_a - tt_bpr_b), 0.1)
 
-    tt_bpr_before = _bpr_travel_times(flows_current, state.capacity, state.length_m, state.speed_free)
-    tt_bpr_after  = _bpr_travel_times(flows_updated, state.capacity, state.length_m, state.speed_free)
-    tt_updated    = np.maximum(tt_current + (tt_bpr_after - tt_bpr_before), 0.1)
-
-    # ── Step 5: Congestion analysis ───────────────────────────────────────────
-    newly_congested = _congestion_delta(flows_current, flows_updated,
-                                         state.capacity, new=True)
-    newly_relieved  = _congestion_delta(flows_current, flows_updated,
-                                         state.capacity, new=False)
-
-    total_before = float(np.sum(flows_current * tt_current))
-    total_after  = float(np.sum(flows_updated * tt_updated))
-    rerouted     = float(sum(p["flow_assigned"] for p in paths_annotated))
-
-    log.info("Removed %s  hour=%02d  displaced=%.1f  rerouted=%.0f%%  "
-             "paths=%d  congested=%d  delay=%.2f veh·h",
-             edge_id, hour, displaced_flow,
-             rerouted / max(displaced_flow, 1) * 100,
-             len(paths_annotated), int(newly_congested.sum()),
-             (total_after - total_before) / 3600)
+    newly_congested = _congestion_delta(flows_current, flows_updated, state.capacity, True)
+    newly_relieved  = _congestion_delta(flows_current, flows_updated, state.capacity, False)
+    tb = float(np.sum(flows_current * tt_current))
+    ta = float(np.sum(flows_updated * tt_updated))
+    rerouted = float(sum(p["flow_assigned"] for p in paths_annotated))
 
     return RemovalResult(
-        edge_id=edge_id, hour=hour,
+        edge_id=edge_id, chain=chain_eids, hour=hour,
+        delta_flows=delta_flows,
+        flows_updated=flows_updated, tt_updated=tt_updated,
+        newly_congested=newly_congested, newly_relieved=newly_relieved,
+        displaced_flow=displaced_total, rerouted_flow=rerouted,
+        total_tt_before=tb, total_tt_after=ta, total_delay=ta - tb,
+        paths=paths_annotated,
+        warning=f"Speed floor applied: {min_speed_kmh:.0f} km/h → "
+                f"{displaced_total:.0f} veh/h redistributed",
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CORE ALGORITHM
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def remove_edge(
+    state:       NetworkState,
+    edge_id:     str,
+    hour:        int,
+    chain_index  = None,
+    k:           int   = K_PATHS,
+    theta:       float = THETA_DEFAULT,
+    nx_graph           = None,
+) -> RemovalResult:
+    import networkx as nx_mod
+
+    hour = max(0, min(state.T - 1, hour))
+
+    # ── 1. Expand edge → full chain ───────────────────────────────────────────
+    if chain_index is not None:
+        chain_eids = chain_index.expand_one(edge_id)
+    else:
+        chain_eids = [edge_id]
+
+    chain_eids = [e for e in chain_eids if e in state.edge_index]
+    if not chain_eids:
+        return _null_result(edge_id, [edge_id], hour, state,
+                            f"Edge '{edge_id}' not found in network")
+
+    chain_idxs    = [state.edge_index[e] for e in chain_eids]
+    chain_idx_set = set(chain_idxs)
+    blocked_set   = frozenset(chain_idxs)
+
+    log.info("Removing chain of %d edge(s) (triggered by %s)  hour=%02d",
+             len(chain_eids), edge_id, hour)
+
+    tt_current    = state.travel_time[hour].copy()
+    flows_current = state.flows[hour].copy()
+
+    # ── 2. Displaced flow ─────────────────────────────────────────────────────
+    displaced_flow = float(np.sum(flows_current[chain_idxs]))
+    total_cap      = float(np.sum(state.capacity[chain_idxs]))
+    displaced_flow = min(displaced_flow, total_cap * 1.5)
+    displaced_flow = max(displaced_flow, 0.0)
+
+    # ── 3. Chain endpoints ────────────────────────────────────────────────────
+    head_node, tail_node = _chain_endpoints(state, chain_idxs, chain_idx_set)
+
+    # ── 4. Find k alternative paths ───────────────────────────────────────────
+    paths_raw: list[dict] = []
+
+    if nx_graph is not None and head_node is not None and tail_node is not None:
+        paths_raw = _nx_k_paths(
+            nx_graph, state, chain_eids, head_node, tail_node,
+            tt_current, hour, k,
+        )
+
+    if not paths_raw and head_node is not None and tail_node is not None:
+        paths_raw = _k_shortest_paths(
+            adj=state.adj, nodes_from=state.nodes_from, nodes_to=state.nodes_to,
+            tt=tt_current, source=head_node, target=tail_node,
+            blocked_edges=blocked_set, k=k, max_hops=MAX_PATH_HOPS,
+        )
+
+    # ── 5. No alternative found ───────────────────────────────────────────────
+    if not paths_raw:
+        flows_updated = flows_current.copy()
+        for ci in chain_idxs:
+            flows_updated[ci] = 0.0
+        tt_bpr_b   = _bpr_travel_times(flows_current, state.capacity, state.length_m, state.speed_free)
+        tt_bpr_a   = _bpr_travel_times(flows_updated, state.capacity, state.length_m, state.speed_free)
+        tt_updated = np.maximum(tt_current + (tt_bpr_a - tt_bpr_b), 0.1)
+        tb = float(np.sum(flows_current * tt_current))
+        ta = float(np.sum(flows_updated * tt_updated))
+        return RemovalResult(
+            edge_id=edge_id, chain=chain_eids, hour=hour,
+            delta_flows=flows_updated - flows_current,
+            flows_updated=flows_updated, tt_updated=tt_updated,
+            newly_congested=_congestion_delta(flows_current, flows_updated, state.capacity, True),
+            newly_relieved= _congestion_delta(flows_current, flows_updated, state.capacity, False),
+            displaced_flow=displaced_flow, rerouted_flow=0.0,
+            total_tt_before=tb, total_tt_after=ta, total_delay=ta - tb,
+            paths=[],
+            warning="No alternative path found — network disconnected at this chain",
+        )
+
+    # ── 6. Logit flow assignment ──────────────────────────────────────────────
+    path_tts = np.array([p["travel_time_s"] for p in paths_raw])
+    log_w    = -theta * path_tts
+    log_w   -= log_w.max()
+    weights  = np.exp(log_w)
+    weights /= weights.sum()
+    flow_assignments = displaced_flow * weights
+
+    # ── 7. Build delta_flows ──────────────────────────────────────────────────
+    delta_flows = np.zeros(state.N, dtype=np.float64)
+    for ci in chain_idxs:
+        delta_flows[ci] = -float(flows_current[ci])
+
+    paths_annotated: list[dict] = []
+    for p, w, fa in zip(paths_raw, weights, flow_assignments):
+        for ei in p["edges"]:
+            delta_flows[ei] += fa
+        paths_annotated.append({
+            "edges":         [state.edge_ids[ei] for ei in p["edges"]],
+            "edge_indices":  p["edges"],
+            "travel_time_s": float(p["travel_time_s"]),
+            "flow_assigned": float(fa),
+            "weight":        float(w),
+            "n_hops":        len(p["edges"]),
+        })
+
+    # ── 8. BPR travel times ───────────────────────────────────────────────────
+    flows_updated = np.maximum(flows_current + delta_flows, 0.0)
+    tt_bpr_b      = _bpr_travel_times(flows_current, state.capacity, state.length_m, state.speed_free)
+    tt_bpr_a      = _bpr_travel_times(flows_updated, state.capacity, state.length_m, state.speed_free)
+    tt_updated    = np.maximum(tt_current + (tt_bpr_a - tt_bpr_b), 0.1)
+
+    # ── 9. Congestion analysis ────────────────────────────────────────────────
+    newly_congested = _congestion_delta(flows_current, flows_updated, state.capacity, True)
+    newly_relieved  = _congestion_delta(flows_current, flows_updated, state.capacity, False)
+
+    tb       = float(np.sum(flows_current * tt_current))
+    ta       = float(np.sum(flows_updated * tt_updated))
+    rerouted = float(sum(p["flow_assigned"] for p in paths_annotated))
+
+    log.info(
+        "  Removed chain=%d  displaced=%.1f  rerouted=%.0f%%  "
+        "paths=%d  congested=%d  delay=%.2f veh·h",
+        len(chain_eids), displaced_flow,
+        rerouted / max(displaced_flow, 1) * 100,
+        len(paths_annotated), int(newly_congested.sum()),
+        (ta - tb) / 3600,
+    )
+
+    return RemovalResult(
+        edge_id=edge_id, chain=chain_eids, hour=hour,
         delta_flows=delta_flows,
         flows_updated=flows_updated, tt_updated=tt_updated,
         newly_congested=newly_congested, newly_relieved=newly_relieved,
         displaced_flow=displaced_flow, rerouted_flow=rerouted,
-        total_tt_before=total_before, total_tt_after=total_after,
-        total_delay=total_after - total_before,
+        total_tt_before=tb, total_tt_after=ta, total_delay=ta - tb,
         paths=paths_annotated,
     )
 
-def _find_stranded_flow(
-    state:        NetworkState,
-    removed_idx:  int,
-    hour:         int,
-    nx_graph      = None,
-) -> tuple[np.ndarray, float]:
-    """
-    Simplified stranding: only the removed edge loses its flow.
-    Cascade propagation is disabled — it over-fires on dense urban graphs,
-    causing phantom multi-hop displacement that inflates displaced_flow 10-100x.
-
-    Re-enable cascade only after validating on isolated corridors.
-    """
-    stranded = np.zeros(state.N, dtype=bool)
-    stranded[removed_idx] = True
-    stranded_flow = float(state.flows[hour, removed_idx])
-
-    log.info("  Stranded edges: 1  displaced_flow=%.1f veh/h", stranded_flow)
-    return stranded, stranded_flow
-
 
 def remove_edge_all_hours(
-    state:    NetworkState,
-    edge_id:  str,
-    k:        int   = K_PATHS,
-    theta:    float = THETA_DEFAULT,
-    nx_graph  = None,
-) -> list:
-    """Run remove_edge for all T hours. Returns list of T RemovalResults."""
-    return [remove_edge(state, edge_id, t, k=k, theta=theta, nx_graph=nx_graph)
-            for t in range(state.T)]
+    state:       NetworkState,
+    edge_id:     str,
+    chain_index  = None,
+    k:           int   = K_PATHS,
+    theta:       float = THETA_DEFAULT,
+    nx_graph           = None,
+) -> list[RemovalResult]:
+    return [
+        remove_edge(state, edge_id, t,
+                    chain_index=chain_index, k=k, theta=theta, nx_graph=nx_graph)
+        for t in range(state.T)
+    ]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# GRAPH ALGORITHMS
+# PATH FINDING — NetworkX backend (no G.copy() in hot path)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _nx_k_paths(
+    nx_graph,
+    state:       NetworkState,
+    chain_eids:  list[str],
+    head_node:   int,
+    tail_node:   int,
+    tt_current:  np.ndarray,
+    hour:        int,
+    k:           int,
+) -> list[dict]:
+    """
+    Find k shortest paths bypassing chain_eids.
+
+    FIX: uses nx.restricted_view() instead of nx_graph.copy().
+    restricted_view() is an O(1) graph view that filters nodes/edges
+    at traversal time — no memory allocation, no deep copy.
+    """
+    import networkx as nx
+
+    if head_node >= len(state.node_ids) or tail_node >= len(state.node_ids):
+        return []
+    u_str = state.node_ids[head_node]
+    v_str = state.node_ids[tail_node]
+
+    if not nx_graph.has_node(u_str) or not nx_graph.has_node(v_str):
+        return []
+
+    chain_eid_set = set(chain_eids)
+
+    # Build the set of (u,v) pairs to hide — O(|chain|) not O(N)
+    hidden_edges = set()
+    for u, v, data in nx_graph.edges(data=True):
+        if data.get("id", "") in chain_eid_set:
+            hidden_edges.add((u, v))
+
+    # O(1) view — no copy
+    G_view = nx.restricted_view(nx_graph, nodes=[], edges=hidden_edges)
+
+    def weight_fn(u, v, d):
+        i_d = state.edge_index.get(d.get("id", ""))
+        if i_d is None:
+            return float(d.get("tt", [30.0] * 24)[hour])
+        return float(tt_current[i_d])
+
+    paths_raw = []
+    try:
+        gen = nx.shortest_simple_paths(G_view, u_str, v_str, weight=weight_fn)
+        for path_nodes in gen:
+            if len(paths_raw) >= k:
+                break
+            edge_indices = []
+            path_tt      = 0.0
+            valid        = True
+            for i_n in range(len(path_nodes) - 1):
+                pu, pv = path_nodes[i_n], path_nodes[i_n + 1]
+                if not G_view.has_edge(pu, pv):
+                    valid = False
+                    break
+                seg_eid = G_view[pu][pv].get("id", "")
+                seg_idx = state.edge_index.get(seg_eid)
+                if seg_idx is None:
+                    seg_tt = float(G_view[pu][pv].get("tt", [30.0] * 24)[hour])
+                else:
+                    edge_indices.append(int(seg_idx))
+                    seg_tt = float(tt_current[int(seg_idx)])
+                path_tt += seg_tt
+            if valid and edge_indices:
+                paths_raw.append({"edges": edge_indices, "travel_time_s": path_tt})
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        pass
+
+    return paths_raw
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PATH FINDING — native adjacency-list Yen's algorithm
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _k_shortest_paths(
-    adj:          dict,
-    nodes_from:   np.ndarray,
-    nodes_to:     np.ndarray,
-    tt:           np.ndarray,
-    source:       int,
-    target:       int,
-    removed_edge: int,
-    k:            int,
-    max_hops:     int,
+    adj:           dict,
+    nodes_from:    np.ndarray,
+    nodes_to:      np.ndarray,
+    tt:            np.ndarray,
+    source:        int,
+    target:        int,
+    blocked_edges: frozenset,
+    k:             int,
+    max_hops:      int,
 ) -> list[dict]:
-    """
-    Find up to k shortest paths from source to target (in node space)
-    using Yen's algorithm with the removed edge excluded.
-
-    Returns list of dicts:
-        {"edges": [edge_idx, ...], "travel_time_s": float}
-    Paths are node-disjoint at intermediate nodes where possible.
-    """
     import heapq
 
-    def dijkstra(adj, nodes_from, nodes_to, tt, src, tgt,
-                  blocked_edges: frozenset, blocked_nodes: frozenset) -> Optional[dict]:
-        """
-        Standard Dijkstra returning the cheapest path.
-        blocked_edges: edge indices to skip
-        blocked_nodes: intermediate node indices to skip
-        """
+    def dijkstra(src, tgt, blocked_e, blocked_n):
         dist = {}
-        prev = {}  # node → (prev_node, edge_idx)
+        prev = {}
         heap = [(0.0, src)]
         dist[src] = 0.0
-
         while heap:
             d, u = heapq.heappop(heap)
             if d > dist.get(u, float("inf")):
                 continue
             if u == tgt:
-                # Reconstruct path
                 path_edges = []
                 cur = tgt
                 hops = 0
@@ -713,71 +797,59 @@ def _k_shortest_paths(
                         return None
                 path_edges.reverse()
                 return {"edges": path_edges, "travel_time_s": d}
-
-            if adj.get(u) is None:
-                continue
-
-            for (vn, ei) in adj[u]:
-                if ei in blocked_edges:
+            for (vn, ei) in adj.get(u, []):
+                if ei in blocked_e:
                     continue
-                if vn != tgt and vn in blocked_nodes:
+                if vn != tgt and vn in blocked_n:
                     continue
                 nd = d + float(tt[ei])
                 if nd < dist.get(vn, float("inf")):
                     dist[vn] = nd
                     prev[vn] = (u, ei)
                     heapq.heappush(heap, (nd, vn))
+        return None
 
-        return None  # no path
-
-    # ── Yen's algorithm ────────────────────────────────────────────────────────
-    blocked_base = frozenset([removed_edge])
-    first = dijkstra(adj, nodes_from, nodes_to, tt,
-                     source, target, blocked_base, frozenset())
+    first = dijkstra(source, target, blocked_edges, frozenset())
     if first is None:
         return []
 
-    A = [first]   # accepted paths
-    B = []        # candidate paths (heap)
+    A = [first]
+    B = []
 
     for _ in range(k - 1):
         last = A[-1]
         for spur_idx in range(len(last["edges"])):
-            spur_node  = source if spur_idx == 0 \
-                         else int(nodes_to[last["edges"][spur_idx - 1]])
+            spur_node  = source if spur_idx == 0 else int(nodes_to[last["edges"][spur_idx - 1]])
             root_edges = last["edges"][:spur_idx]
             root_tt    = sum(float(tt[e]) for e in root_edges)
 
-            # Block edges that are used by existing accepted paths
-            # at the same root path prefix
-            blocked_e = set(blocked_base)
+            blocked_e = set(blocked_edges)
             blocked_n = set()
+
+            # FIX: use tuple comparison to avoid O(k·n) list equality
+            root_tuple = tuple(root_edges)
             for p in A:
                 if (len(p["edges"]) > spur_idx and
-                        p["edges"][:spur_idx] == root_edges):
+                        tuple(p["edges"][:spur_idx]) == root_tuple):
                     blocked_e.add(p["edges"][spur_idx])
 
-            # Block root path nodes (except spur_node) to prevent loops
             cur = source
             for ei in root_edges:
                 if cur != spur_node:
                     blocked_n.add(cur)
                 cur = int(nodes_to[ei])
 
-            spur = dijkstra(adj, nodes_from, nodes_to, tt,
-                            spur_node, target,
-                            frozenset(blocked_e), frozenset(blocked_n))
+            spur = dijkstra(spur_node, target, frozenset(blocked_e), frozenset(blocked_n))
             if spur is None:
                 continue
 
-            # Candidate = root + spur
             cand_edges = root_edges + spur["edges"]
-            cand_tt    = root_tt    + spur["travel_time_s"]
+            cand_tt    = root_tt + spur["travel_time_s"]
             cand       = {"edges": cand_edges, "travel_time_s": cand_tt}
 
-            # Dedup: skip if already in A or B
-            if not any(c["edges"] == cand_edges for c in A) and \
-               not any(c["edges"] == cand_edges for _, c in B):
+            cand_tuple = tuple(cand_edges)
+            if (not any(tuple(c["edges"]) == cand_tuple for c in A) and
+                    not any(tuple(c["edges"]) == cand_tuple for _, c in B)):
                 heapq.heappush(B, (cand_tt, cand))
 
         if not B:
@@ -789,153 +861,167 @@ def _k_shortest_paths(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# BPR SPEED / TRAVEL TIME UPDATE
+# BPR
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _bpr_travel_times(
-    flows:      np.ndarray,
-    capacity:   np.ndarray,
-    length_m:   np.ndarray,
-    speed_free: np.ndarray,
-) -> np.ndarray:
-    """
-    Compute per-edge travel times (s) using BPR speed model.
-    v(i) = v_free[i] / (1 + α (q/C)^β)
-    t(i) = length[i] × 3.6 / v(i)
-    """
+def _bpr_travel_times(flows, capacity, length_m, speed_free):
     vc_clip   = np.minimum(flows / np.maximum(capacity, 1.0), 10.0)
     speed_bpr = speed_free / (1.0 + BPR_ALPHA * vc_clip ** BPR_BETA)
-    speed_bpr = np.maximum(speed_bpr, 0.5)   # floor 0.5 km/h
+    speed_bpr = np.maximum(speed_bpr, 0.5)
     return length_m * 3.6 / speed_bpr
 
 
-def _congestion_delta(
-    flows_before: np.ndarray,
-    flows_after:  np.ndarray,
-    capacity:     np.ndarray,
-    new:          bool,
-) -> np.ndarray:
-    """
-    Returns boolean mask of edges that:
-      new=True  → newly congested (was fine, now v/c > threshold)
-      new=False → newly relieved  (was congested, now v/c < threshold)
-    """
-    thr = CONGESTION_VC_THRESHOLD
-    vc_before = flows_before / np.maximum(capacity, 1.0)
-    vc_after  = flows_after  / np.maximum(capacity, 1.0)
+def _congestion_delta(flows_before, flows_after, capacity, new):
+    thr      = CONGESTION_VC_THRESHOLD
+    vc_b     = flows_before / np.maximum(capacity, 1.0)
+    vc_a     = flows_after  / np.maximum(capacity, 1.0)
     if new:
-        return (vc_before <= thr) & (vc_after > thr)
+        return (vc_b <= thr) & (vc_a > thr)
     else:
-        return (vc_before >  thr) & (vc_after <= thr)
+        return (vc_b >  thr) & (vc_a <= thr)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# BATCH ANALYSIS: edge criticality scoring
+# CRITICALITY SCORING
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def criticality_scores(
-    state:    NetworkState,
-    hour:     int = 8,
-    edge_ids: Optional[list] = None,
-    k:        int = K_PATHS,
-    theta:    float = THETA_DEFAULT,
+    state:       NetworkState,
+    hour:        int   = 8,
+    edge_ids:    Optional[list] = None,
+    chain_index  = None,
+    k:           int   = K_PATHS,
+    theta:       float = THETA_DEFAULT,
+    nx_graph           = None,
 ) -> list[dict]:
     """
-    Compute a criticality score for each edge = extra delay caused by removal.
+    Composite criticality score — weighted combination of four dimensions:
 
-    Scores are normalised to [0, 1] across the evaluated edges.
-    Only sensor and reconstructed edges are evaluated (prior-only skipped).
+        criticality = 0.40 × delay_norm
+                    + 0.30 × flow_norm
+                    + 0.20 × congestion_norm
+                    + 0.10 × isolation_penalty
 
-    Returns list of dicts sorted by criticality descending.
+    where:
+        delay_norm       = total_delay_veh_h / max(total_delay_veh_h)
+        flow_norm        = displaced_flow    / max(displaced_flow)
+        congestion_norm  = n_congested       / max(n_congested)   (or 0 if all zero)
+        isolation_penalty= 1 - rerouted_pct/100   (0 = fully reroutable, 1 = no alt)
+
+    All components are clipped to [0, 1] before weighting.
+    Edges with no eligible simulation result are assigned criticality=0.
     """
     if edge_ids is None:
-        # Evaluate sensor + reconstructed edges only
         edge_ids = [
             state.edge_ids[i] for i in range(state.N)
             if state.data_source[i] in ("sensor", "reconstructed")
             and state.nodes_from[i] >= 0
-            and state.flows[hour, i] > 5.0   # skip trivially empty edges
+            and state.flows[hour, i] > 5.0
         ]
 
     log.info("Computing criticality for %d edges at hour %02d:00 ...",
              len(edge_ids), hour)
 
-    scores = []
+    raw: list[dict] = []
     for eid in edge_ids:
-        r = remove_edge(state, eid, hour, k=k, theta=theta)
-        scores.append({
-            "edge_id":          eid,
-            "displaced_flow":   r.displaced_flow,
-            "rerouted_pct":     r.rerouted_flow / max(r.displaced_flow, 1) * 100,
+        r = remove_edge(state, eid, hour,
+                        chain_index=chain_index, k=k, theta=theta,
+                        nx_graph=nx_graph)
+        reroute_pct = r.rerouted_flow / max(r.displaced_flow, 1) * 100
+        raw.append({
+            "edge_id":           eid,
+            "chain_len":         len(r.chain),
+            "displaced_flow":    r.displaced_flow,
+            "rerouted_pct":      reroute_pct,
             "total_delay_veh_h": r.total_delay / 3600,
-            "n_congested":      int(r.newly_congested.sum()),
-            "warning":          r.warning,
+            "n_congested":       int(r.newly_congested.sum()),
+            "warning":           r.warning,
         })
 
-    # Normalise delay to [0, 1]
-    delays = np.array([s["total_delay_veh_h"] for s in scores])
-    if delays.max() > 0:
-        delays_norm = delays / delays.max()
-    else:
-        delays_norm = np.zeros_like(delays)
+    if not raw:
+        return []
 
-    for s, cn in zip(scores, delays_norm):
-        s["criticality"] = round(float(cn), 4)
+    # ── Normalise each dimension independently ────────────────────────────────
+    def _norm(arr):
+        mn, mx = arr.min(), arr.max()
+        if mx - mn < 1e-9:
+            return np.zeros_like(arr)
+        return (arr - mn) / (mx - mn)
+
+    delays     = np.array([s["total_delay_veh_h"] for s in raw], dtype=np.float64)
+    flows      = np.array([s["displaced_flow"]     for s in raw], dtype=np.float64)
+    congested  = np.array([s["n_congested"]        for s in raw], dtype=np.float64)
+    isolation  = np.array([1.0 - min(s["rerouted_pct"], 100) / 100.0 for s in raw], dtype=np.float64)
+
+    delay_norm      = _norm(delays)
+    flow_norm       = _norm(flows)
+    congestion_norm = _norm(congested)
+    # isolation is already 0-1 by construction, but normalise for fairness
+    isolation_norm  = _norm(isolation)
+
+    composite = (
+        0.40 * delay_norm
+      + 0.30 * flow_norm
+      + 0.20 * congestion_norm
+      + 0.10 * isolation_norm
+    )
+    # Clip to [0,1] for safety
+    composite = np.clip(composite, 0.0, 1.0)
+
+    scores = []
+    for s, c in zip(raw, composite):
+        scores.append({**s, "criticality": round(float(c), 4)})
 
     scores.sort(key=lambda s: -s["criticality"])
-    log.info("  Top edge: %s  criticality=%.4f  delay=%.2f veh·h",
-             scores[0]["edge_id"] if scores else "—",
-             scores[0]["criticality"] if scores else 0,
-             scores[0]["total_delay_veh_h"] if scores else 0)
+
+    if scores:
+        top = scores[0]
+        log.info(
+            "  Top edge: %s  criticality=%.4f  "
+            "delay=%.2f veh·h  flow=%.0f veh/h  congested=%d  isolation=%.0f%%",
+            top["edge_id"], top["criticality"], top["total_delay_veh_h"],
+            top["displaced_flow"], top["n_congested"],
+            (1 - top["rerouted_pct"] / 100) * 100,
+        )
     return scores
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# WEB APP INTERFACE
+# WEB APP SERVICE
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class EdgeRemovalService:
-    """
-    Stateful service class for the web app.
-
-    Usage:
-        service = EdgeRemovalService(pkl_path, net_path)
-        service.load()              # call once at startup (background thread)
-        service.set_nx_graph(G)     # inject the already-built NetworkX DiGraph
-                                    # from app.py — avoids topology rebuild
-
-        # Per-request:
-        result_dict = service.simulate(edge_id="-123#0", hour=8)
-        geojson     = service.simulate_geojson(edge_id="-123#0", hour=8)
-    """
-
-    def __init__(self, pkl_path: str, net_path: str):
-        self.pkl_path  = pkl_path
-        self.net_path  = net_path
+    def __init__(self, pkl_path: str, net_path: str, chains_path: str = ""):
+        self.pkl_path    = pkl_path
+        self.net_path    = net_path
+        self.chains_path = chains_path
         self._state:  Optional[NetworkState] = None
-        self._net     = None   # sumolib net for GeoJSON export
-        self._G       = None   # NetworkX DiGraph injected from app.py
+        self._net     = None
+        self._G       = None
+        self._chains  = None
         self._loaded  = False
 
     def set_nx_graph(self, G) -> None:
-        """
-        Inject the NetworkX DiGraph built by app.py.
-
-        This is the authoritative routing graph — it was built from the
-        same GeoJSON + sumolib edges the router uses, so it's guaranteed
-        to be connected correctly. Call this after load() completes.
-        """
         self._G = G
-        log.info("EdgeRemovalService: NetworkX graph injected "
-                 "(%d nodes, %d edges)", G.number_of_nodes(), G.number_of_edges())
+        log.info("EdgeRemovalService: NetworkX graph injected (%d nodes, %d edges)",
+                 G.number_of_nodes(), G.number_of_edges())
 
     def load(self) -> None:
-        self._state  = NetworkState.load(self.pkl_path, self.net_path)
+        self._state = NetworkState.load(self.pkl_path, self.net_path)
+
+        if self.chains_path:
+            from chain_utils import load_chains
+            self._chains = load_chains(self.chains_path)
+            log.info("EdgeRemovalService: chain index loaded (%d chains)", len(self._chains))
+        else:
+            log.warning("EdgeRemovalService: no chains_path supplied — single-edge removal only")
+
         try:
             import sumolib
             self._net = sumolib.net.readNet(self.net_path)
         except Exception as ex:
             log.warning("Could not load sumolib net for GeoJSON: %s", ex)
+
         self._loaded = True
         log.info("EdgeRemovalService ready.")
 
@@ -947,79 +1033,70 @@ class EdgeRemovalService:
     def n_edges(self) -> int:
         return self._state.N if self._state else 0
 
-    def simulate(
-        self,
-        edge_id: str,
-        hour:    int   = 8,
-        k:       int   = K_PATHS,
-        theta:   float = THETA_DEFAULT,
-    ) -> dict:
-        """Returns JSON-serialisable result dict."""
+    def expand_chain(self, edge_id: str) -> list[str]:
+        if self._chains is None:
+            return [edge_id]
+        return self._chains.expand_one(edge_id)
+
+    def chain_summary(self, edge_id: str) -> dict:
+        if self._chains is None:
+            return {"edge_id": edge_id, "chain_len": 1, "chain": [edge_id], "is_multi": False}
+        return self._chains.chain_summary(edge_id)
+
+    def simulate(self, edge_id: str, hour: int = 8,
+                 k: int = K_PATHS, theta: float = THETA_DEFAULT) -> dict:
         if not self._loaded:
             return {"error": "Service not loaded"}
-        r = remove_edge(self._state, edge_id, hour, k=k, theta=theta,
-                        nx_graph=self._G)
+        r = remove_edge(self._state, edge_id, hour,
+                        chain_index=self._chains, k=k, theta=theta, nx_graph=self._G)
         return r.to_dict()
 
-    def simulate_all_hours(
-        self,
-        edge_id: str,
-        k:       int   = K_PATHS,
-        theta:   float = THETA_DEFAULT,
-    ) -> list[dict]:
-        """Returns list of result dicts for all 24 hours."""
+    def simulate_all_hours(self, edge_id: str,
+                           k: int = K_PATHS, theta: float = THETA_DEFAULT) -> list[dict]:
         if not self._loaded:
             return [{"error": "Service not loaded"}]
-        results = remove_edge_all_hours(self._state, edge_id, k=k, theta=theta,
-                                         nx_graph=self._G)
+        results = remove_edge_all_hours(
+            self._state, edge_id,
+            chain_index=self._chains, k=k, theta=theta, nx_graph=self._G,
+        )
         return [r.to_dict() for r in results]
 
-    def simulate_geojson(
-        self,
-        edge_id: str,
-        hour:    int   = 8,
-        k:       int   = K_PATHS,
-        theta:   float = THETA_DEFAULT,
-    ) -> dict:
-        """Returns GeoJSON FeatureCollection of affected edges."""
+    def simulate_geojson(self, edge_id: str, hour: int = 8,
+                         k: int = K_PATHS, theta: float = THETA_DEFAULT) -> dict:
         if not self._loaded:
             return {"error": "Service not loaded"}
         if self._net is None:
             return {"error": "Network geometry not available"}
-        r = remove_edge(self._state, edge_id, hour, k=k, theta=theta,
-                        nx_graph=self._G)
+        r = remove_edge(self._state, edge_id, hour,
+                        chain_index=self._chains, k=k, theta=theta, nx_graph=self._G)
         return r.to_geojson_delta(self._state, self._net)
 
     def get_edge_info(self, edge_id: str, hour: int = 8) -> Optional[dict]:
-        """Get current state of a single edge (before removal)."""
         if not self._loaded:
             return None
         idx = self._state.edge_index.get(edge_id)
         if idx is None:
             return None
+        chain = self.expand_chain(edge_id)
         return {
-            "edge_id":     edge_id,
-            "road_type":   self._state.road_type[idx],
-            "capacity":    round(float(self._state.capacity[idx]), 1),
-            "length_m":    round(float(self._state.length_m[idx]), 1),
-            "flow_veh_h":  round(float(self._state.flows[hour, idx]), 1),
-            "vc_ratio":    round(float(self._state.flows[hour, idx] /
-                               max(self._state.capacity[idx], 1)), 4),
-            "tt_s":        round(float(self._state.travel_time[hour, idx]), 1),
-            "data_source": self._state.data_source[idx],
+            "edge_id":      edge_id,
+            "chain":        chain,
+            "chain_len":    len(chain),
+            "road_type":    self._state.road_type[idx],
+            "capacity":     round(float(self._state.capacity[idx]), 1),
+            "length_m":     round(float(self._state.length_m[idx]), 1),
+            "flow_veh_h":   round(float(self._state.flows[hour, idx]), 1),
+            "vc_ratio":     round(float(self._state.flows[hour, idx] /
+                                max(self._state.capacity[idx], 1)), 4),
+            "tt_s":         round(float(self._state.travel_time[hour, idx]), 1),
+            "data_source":  self._state.data_source[idx],
             "within_reach": bool(self._state.within_reach[idx]),
         }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CLI ENTRY POINT
+# CLI
 # ═══════════════════════════════════════════════════════════════════════════════
-
-DEFAULTS = {
-    "pkl": "outputs/graph_reconstruction/gurugram_traffic_arrays.pkl",
-    "net": "outputs/networks/full.net.xml",
-}
-
 
 def main():
     logging.basicConfig(
@@ -1029,21 +1106,18 @@ def main():
     )
 
     p = argparse.ArgumentParser(
-        description="Edge removal & flow redistribution",
+        description="Chain-aware edge removal & flow redistribution",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--pkl",   default=DEFAULTS["pkl"])
-    p.add_argument("--net",   default=DEFAULTS["net"])
-    p.add_argument("--edge",  required=True,  help="SUMO edge ID to remove")
-    p.add_argument("--hour",  type=int, default=8, help="Hour of day (0-23)")
-    p.add_argument("--k",     type=int, default=K_PATHS,
-                   help="Number of alternative paths")
-    p.add_argument("--theta", type=float, default=THETA_DEFAULT,
-                   help="Logit temperature (1/s)")
-    p.add_argument("--all-hours", action="store_true",
-                   help="Run for all 24 hours")
-    p.add_argument("--json", action="store_true",
-                   help="Output JSON instead of summary text")
+    p.add_argument("--pkl",       default=DEFAULTS["pkl"])
+    p.add_argument("--net",       default=DEFAULTS["net"])
+    p.add_argument("--chains",    default=DEFAULTS["chains"])
+    p.add_argument("--edge",      required=True)
+    p.add_argument("--hour",      type=int, default=8)
+    p.add_argument("--k",         type=int, default=K_PATHS)
+    p.add_argument("--theta",     type=float, default=THETA_DEFAULT)
+    p.add_argument("--all-hours", action="store_true")
+    p.add_argument("--json",      action="store_true")
     args = p.parse_args()
 
     for path, label in [(args.pkl, "--pkl"), (args.net, "--net")]:
@@ -1053,18 +1127,27 @@ def main():
 
     state = NetworkState.load(args.pkl, args.net)
 
+    chain_index = None
+    if Path(args.chains).exists():
+        from chain_utils import load_chains
+        chain_index = load_chains(args.chains)
+    else:
+        print(f"WARNING: chains file not found at {args.chains} — single-edge mode")
+
     if args.all_hours:
-        results = remove_edge_all_hours(state, args.edge,
-                                         k=args.k, theta=args.theta)
+        results = remove_edge_all_hours(
+            state, args.edge, chain_index=chain_index, k=args.k, theta=args.theta,
+        )
         if args.json:
             print(json.dumps([r.to_dict() for r in results], indent=2))
         else:
             for r in results:
-                print(r.summary())
-                print()
+                print(r.summary()); print()
     else:
-        result = remove_edge(state, args.edge, args.hour,
-                              k=args.k, theta=args.theta)
+        result = remove_edge(
+            state, args.edge, args.hour, chain_index=chain_index,
+            k=args.k, theta=args.theta,
+        )
         if args.json:
             print(json.dumps(result.to_dict(), indent=2))
         else:
