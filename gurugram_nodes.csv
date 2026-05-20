@@ -1,0 +1,388 @@
+name,type,lat,lon,source
+Fountain Chowk,junction,28.4634564,77.0336532,osm
+IFFCO Chowk,junction,28.47919,77.0704879,osm
+MLA Flats T Point Crossing,junction,28.467966,77.0941899,osm
+Rajiv Chowk,junction,28.4947,77.0895,manual
+Mata Chowk,junction,28.5397491,77.1316163,osm
+Bharti Infratel Chowk,junction,28.492357,77.0821224,osm
+Ambedkar Chowk,junction,28.4723208,77.08934,osm
+Sikanderpur Chowk,junction,28.4817361,77.0942535,osm
+Bristol Chowk,junction,28.4788656,77.0942935,osm
+Chaudhary Daya Ram Chowk,junction,28.5057072,77.1746095,osm
+Pipal Chowk,junction,28.5224877,77.1711187,osm
+Mehta Chowk,junction,28.5183903,77.1797678,osm
+IMT Chowk,junction,28.3616618,76.9402147,osm
+Atlas Chowk,junction,28.4911241,77.0809851,osm
+Hero Honda Chowk,junction,28.438,76.9945,manual
+Subhash Chowk,junction,28.45,77.03,manual
+Badshahpur Chowk,junction,28.4095,77.0303,manual
+Shankar Chowk,junction,28.493,77.082,manual
+Guru Dronacharya Metro,metro_station,28.4856,77.092,manual
+MG Road Metro,metro_station,28.48,77.085,manual
+Sector 55–56,metro_station,28.4233556,77.1051327,osm
+DLF Phase 1,metro_station,28.4714258,77.0939606,osm
+Basai Dhankot,metro_station,28.4645841,76.9828171,osm
+Patli,metro_station,28.4010774,76.857079,osm
+Dwarka Sector 9,metro_station,28.574272,77.0653316,osm
+Sir M. Vishweshwaraiah Moti Bagh,metro_station,28.5785326,77.175741,osm
+Cyber City,metro_station,28.4980703,77.0892567,osm
+Dwarka Sector 21,metro_station,28.5519218,77.0585605,osm
+Dwarka Sector 8,metro_station,28.5656109,77.0670366,osm
+Gurgaon,metro_station,28.4890874,77.0111572,osm
+Delhi Aerocity,metro_station,28.5487786,77.1207949,osm
+IGI Airport,metro_station,28.5564626,77.0866995,osm
+Bijwasan,metro_station,28.5369587,77.0512889,osm
+Sikanderpur,metro_station,28.4812716,77.0930017,osm
+Moulsari Avenue Station,metro_station,28.5007775,77.0946306,osm
+Phase 3 Station,metro_station,28.4935677,77.093661,osm
+Munirka,metro_station,28.5568967,77.1750592,osm
+Garhi Harsaru Junction,metro_station,28.4382985,76.9307249,osm
+Vasant Vihar,metro_station,28.557827,77.1611168,osm
+Sikanderpur RMRG Station,metro_station,28.4809969,77.0944367,osm
+DLF Phase 2,metro_station,28.4875596,77.0929909,osm
+Belvedere Towers,metro_station,28.4917023,77.0881318,osm
+Palam Vihar,metro_station,28.5164657,77.0339696,osm
+Sultanpur Kaliawas,metro_station,28.4604562,76.869675,osm
+Sector 42-43,metro_station,28.4574254,77.0969529,osm
+Sector 53-54,metro_station,28.4463829,77.1004632,osm
+Sector 54 Chowk,metro_station,28.4329768,77.1048971,osm
+Terminal 1 IGI Airport,metro_station,28.564835,77.1226566,osm
+Sadar Bazar Cantonment,metro_station,28.5771145,77.1111279,osm
+Shankar Vihar,metro_station,28.5608462,77.1402814,osm
+Yashobhoomi Dwarka Sector 25,metro_station,28.5508323,77.0453073,osm
+Guru Dronacharya,metro_station,28.4820212,77.1022685,osm
+M G Road,metro_station,28.4795543,77.0798926,osm
+Millennium City Centre Gurugram,metro_station,28.4593429,77.0726571,osm
+Chhatarpur,metro_station,28.5067242,77.1750019,osm
+Sultanpur,metro_station,28.4991235,77.1613745,osm
+Ghitorni,metro_station,28.493751,77.1491866,osm
+Arjan Garh,metro_station,28.4807352,77.1257622,osm
+Shahbad Muhammadpur,metro_station,28.5603258,77.0715537,osm
+Dwarka Bus Depot,bus_terminal,28.5761642,77.0702284,osm
+Gurugram Bus Stand,bus_terminal,28.4652485,77.0322077,osm
+Aya Nagar Bus Terminal,bus_terminal,28.4768282,77.1304909,osm
+Sohna Road Toll,toll_plaza,28.39,77.025,manual
+Sohna Gurgaon Toll,toll_plaza,28.3335461,77.0676736,osm
+Kapashera Border Toll Booth,toll_plaza,28.519272,77.0810607,osm
+Kherki Daula Toll Plaza,toll_plaza,28.382,76.991,manual
+Expressway Toll,toll_plaza,28.3954313,76.9820455,osm
+Ambience Mall,commercial,28.5041797,77.0967881,osm
+Suncity Trade Tower,commercial,28.5080747,77.0714497,osm
+Corporate Tower,commercial,28.5023836,77.096631,osm
+Nestlé House,commercial,28.4909134,77.0832944,osm
+DLF Square,commercial,28.491414,77.0840161,osm
+L-Band Radar and HF Transmitting Station,commercial,28.5275475,77.0541652,osm
+Vipul Tech Square,commercial,28.4596959,77.094959,osm
+One Horizon Center,commercial,28.4515059,77.0972752,osm
+Global Foyer Mall,commercial,28.4605376,77.0950285,osm
+MPD Towers,commercial,28.4546982,77.0969626,osm
+Park Centra,commercial,28.4596686,77.0519387,osm
+Le Meridien Hotel,commercial,28.4804683,77.1080186,osm
+Sushant Arcade,commercial,28.4607928,77.078975,osm
+Mindarika,commercial,28.3863,76.9401583,osm
+Gold Souk,commercial,28.4507445,77.0787181,osm
+Sandstone Crest,commercial,28.4588705,77.0757356,osm
+Time Tower,commercial,28.4778064,77.0764706,osm
+32nd Milestone,commercial,28.4615504,77.0500557,osm
+Plaza Tower,commercial,28.4706223,77.1024006,osm
+Bawa Potteries,commercial,28.522042,77.1653199,osm
+South Point Mall,commercial,28.4479502,77.0991744,osm
+Delhivery HQ,commercial,28.4550354,77.0701793,osm
+Business Bay,commercial,28.3926451,76.9777125,osm
+INXT City Centre,commercial,28.3907884,76.9744648,osm
+Floreal Towers,commercial,28.39339,76.9772409,osm
+Vatika Business Park,commercial,28.4059527,77.0446388,osm
+Unitech House,commercial,28.4549857,77.0629167,osm
+World Trade Centre,commercial,28.429666,77.0348707,osm
+Platinum Tower,commercial,28.4211413,77.0405688,osm
+Neo One,commercial,28.5042075,77.0081733,osm
+Delhi Jal Board,commercial,28.54097,77.0588499,osm
+Candor TechSpace,commercial,28.4253414,77.0312586,osm
+Kartar Singh Market,commercial,28.5538458,77.1779636,osm
+Maruti Suzuki India,commercial,28.3683914,76.8933272,osm
+Maruti Suzuki India Limited,commercial,28.4955945,77.0694729,osm
+Sector 54 Gurgaon Metro Rail Depot,commercial,28.4327057,77.1019995,osm
+Easyday Club,commercial,28.4414581,77.0760783,osm
+Peach Tree Complex,commercial,28.4510459,77.0817319,osm
+City Centre,commercial,28.4125783,77.0423515,osm
+Silokhera SEZ,commercial,28.4637508,77.0554744,osm
+Unilever Limited,commercial,28.467037,77.0589164,osm
+MGF Megapolis Mall,commercial,28.4786609,77.0822958,osm
+DT City Center,commercial,28.4788004,77.0805481,osm
+Sahara Mall,commercial,28.4795772,77.0866588,osm
+MGF Mega City,commercial,28.4796837,77.0894134,osm
+City Mart,commercial,28.4166613,77.0414261,osm
+Global Bussiness Park,commercial,28.480443,77.1025035,osm
+Jay Ushin LTD,commercial,28.4904354,77.0592946,osm
+Westin,commercial,28.47697,77.0705137,osm
+Star Mall,commercial,28.461382,77.0526784,osm
+Gurgaon Central,commercial,28.4795661,77.0756468,osm
+HUDA Gymkhana Club,commercial,28.4668014,77.0618345,osm
+The Palms Town & Country Club,commercial,28.4600298,77.0765468,osm
+Cairn India Limited,commercial,28.4931852,77.0855478,osm
+Boulevard,commercial,28.4182046,77.0410264,osm
+Orchid Business Centre,commercial,28.4261354,77.036378,osm
+Business Tower,commercial,28.404572,77.0425333,osm
+Trade Centre,commercial,28.407032,77.0418224,osm
+Universal Trade Tower,commercial,28.4149985,77.041899,osm
+Spazedge,commercial,28.419863,77.0405171,osm
+Senior Mall,commercial,28.4807103,77.0822628,osm
+Vatika Atrium,commercial,28.4400833,77.1017696,osm
+Business Square,commercial,28.4085208,77.068255,osm
+Proffessional Point,commercial,28.4014849,77.0493125,osm
+Palm Square,commercial,28.4021284,77.0503263,osm
+114 Avenue,commercial,28.536339,77.018527,osm
+Ardee Mall,commercial,28.4451642,77.0808033,osm
+Uno Minda,commercial,28.3716505,76.9377978,osm
+McDonald's,commercial,28.3739733,76.9532489,osm
+Grand Mall,commercial,28.479856,77.0900827,osm
+Aquarius Cyber Park,commercial,28.4068399,77.004654,osm
+Haritima Tourist Complex,commercial,28.5309374,76.9986363,osm
+DLF Promenade,commercial,28.5424742,77.1560024,osm
+DLF Emporio,commercial,28.5435328,77.1567003,osm
+The Grand New Delhi,commercial,28.5388809,77.1518285,osm
+Ranbaxy Corporate Headquarters,commercial,28.4469126,77.0397174,osm
+ITC House,commercial,28.4444595,77.0390492,osm
+JMD Regent Plaza,commercial,28.47972,77.0885535,osm
+Aspire Shiksha Overseas Education Consultants In Delhi,commercial,28.5107712,77.0486479,osm
+Silverton Towers,commercial,28.4083291,77.06294,osm
+Gobind Hospital,commercial,28.3905221,77.0491169,osm
+GD Goenka   Global School,commercial,28.4858411,77.1019323,osm
+indus,commercial,28.4628335,77.0707179,osm
+Nirvana Courtyard,commercial,28.4141563,77.0658248,osm
+NASSCOM Startup Warehouse,commercial,28.516813,77.0806226,osm
+"Paras Hospital, Gurgaon",commercial,28.4509689,77.0875533,osm
+"Metro Hospital and Heart Institute, Gurgaon",commercial,28.518174,77.0388234,osm
+PHC Ujjwa,commercial,28.5702527,76.9041305,osm
+Sitaram Bhartia,commercial,28.4675077,77.0824741,osm
+Sai Heart and Trauma Center,commercial,28.3978752,77.0455899,osm
+TajSATS Catering,commercial,28.5476915,77.1086157,osm
+Astha Hospital,commercial,28.3509265,77.0649209,osm
+Pushpanjali Hospital,commercial,28.4508125,77.0328448,osm
+Suburbio 67,commercial,28.3833437,77.0551899,osm
+ILD Mall,commercial,28.4249152,77.0391127,osm
+Saphhire Mall,commercial,28.4117752,77.0487327,osm
+Mr Light Experience Center,commercial,28.4980854,77.1631407,osm
+KC Market,commercial,28.5485314,77.1670613,osm
+Institutional Area,commercial,28.5565892,77.1764711,osm
+Paras,commercial,28.4365308,77.1345726,osm
+polutryfarm,commercial,28.3346717,76.8817896,osm
+Maruti Manesar Power Station,commercial,28.3669709,76.8951816,osm
+AIHP Tower,commercial,28.4973266,77.0827919,osm
+Nokia Solutions and Networks,commercial,28.4994636,77.0725191,osm
+PD Logistics Park,commercial,28.4106865,77.0332724,osm
+Safexpress Private Limited,commercial,28.4900329,77.0748613,osm
+BSNL Office,commercial,28.4249759,77.1005272,osm
+Delhivery Ltd,commercial,28.3865672,77.0047503,osm
+RK Puram Sector 12 Market,commercial,28.5747351,77.175859,osm
+Ocus Quantum,commercial,28.425131,77.0684556,osm
+Conscient One,commercial,28.5030215,77.0075055,osm
+Araya Bagh X TARUN TAHILIANI,commercial,28.4948052,77.1491526,osm
+The Esplanade Mall,commercial,28.453487,76.9923366,osm
+M3M IFC,commercial,28.4049457,77.0585032,osm
+DLF Downtown Gurugram,commercial,28.5036304,77.0952441,osm
+Nandi Shopping Block,commercial,28.3662392,76.9467754,osm
+Garuda Shopping Block,commercial,28.3662518,76.9458037,osm
+Max Hospital,commercial,28.462841,77.0759312,osm
+trial,commercial,28.4396337,77.0459412,osm
+none,commercial,28.4813038,77.0134251,osm
+Augusta Point,commercial,28.4436203,77.1000464,osm
+Global Gateway Towers,commercial,28.480776,77.1038806,osm
+Genpact,commercial,28.4870819,77.0760393,osm
+38th milestone,commercial,28.4271659,77.0045454,osm
+Orient Bestec Business Tower,commercial,28.4291013,77.0065913,osm
+KLJ Commercial,commercial,28.3908726,76.9755795,osm
+Minda Industries,commercial,28.384753,76.940302,osm
+Palm Spring Plaza,commercial,28.4453358,77.1014665,osm
+Ocus Technopolis,commercial,28.4409953,77.1030637,osm
+Masterpiece,commercial,28.4462312,77.1012602,osm
+Nissan Service,commercial,28.4895486,77.0585444,osm
+Vipul Plaza,commercial,28.4350109,77.1063262,osm
+Vatika Tower,commercial,28.4382005,77.1048041,osm
+Business Park,commercial,28.4224711,77.0373196,osm
+Suncity Business Tower,commercial,28.433307,77.1055735,osm
+Paras Twin Towers,commercial,28.434223,77.105722,osm
+Orchid Centre,commercial,28.4328966,77.1039825,osm
+Centrum Plaza,commercial,28.43425,77.1031296,osm
+Skyview Corporate Park,commercial,28.4086491,76.9936699,osm
+Corporate Greens,commercial,28.4063807,76.9978027,osm
+Digital Greens,commercial,28.4153806,77.0944673,osm
+Colonade,commercial,28.4042585,77.0561037,osm
+Vesta Business Park,commercial,28.3988874,77.0253613,osm
+Palazzo,commercial,28.3996335,77.038518,osm
+Forum,commercial,28.3953202,77.0302098,osm
+Spaze Corporate Park,commercial,28.3951028,77.0318702,osm
+Reach Airia Mall,commercial,28.3831468,77.052597,osm
+68 Avenue,commercial,28.385169,77.0521021,osm
+24k,commercial,28.3846422,77.051539,osm
+ASF Centre,commercial,28.5002599,77.0779767,osm
+i-Tech Park,commercial,28.4138442,77.0422847,osm
+Centre One,commercial,28.4159818,77.0931178,osm
+Urbana,commercial,28.3913133,77.0660691,osm
+AIPL Joy Street,commercial,28.3920893,77.0593765,osm
+The Cityscape,commercial,28.4033199,77.0593596,osm
+Success Tower,commercial,28.4085847,77.0709757,osm
+Corporate Centre,commercial,28.3906673,77.0606432,osm
+Delhi Airport Bus Depot,commercial,28.560339,77.0887209,osm
+S&A Tower,commercial,28.4913112,77.0787701,osm
+Vatika Triangle,commercial,28.4777413,77.0812552,osm
+Park Hospital Gurgaon,commercial,28.4201363,77.0487258,osm
+"Kalyan Hospital, Gurgaon",commercial,28.5061017,77.0222524,osm
+Chiranjiv Hospital,commercial,28.4644545,77.0187361,osm
+"Sidhesh Hospital, Gurgaon",commercial,28.4752436,77.0824251,osm
+Privat Hospital,commercial,28.4797951,77.0746909,osm
+Uma Sanjeevani Health Centre And Hospital,commercial,28.4814867,77.0863196,osm
+"Kalyani Hospital, Gurgaon",commercial,28.4678366,77.0422697,osm
+السكن,commercial,28.4460767,77.0615689,osm
+Dayal Eye & Maternity Centre,commercial,28.4559386,77.0374082,osm
+Pasricha Hospital and Maternity Home,commercial,28.4568812,77.0222792,osm
+"Sangwan Hospital, Gurgaon",commercial,28.4749937,77.0561126,osm
+"Surgicare Hospital, Gurgaon",commercial,28.4272365,77.0940806,osm
+Sethi Hospital,commercial,28.4565865,77.0207731,osm
+Navjeevan Hospital and Maternity Centre,commercial,28.4571607,77.0143104,osm
+"Anand Hospital, Gurgaon",commercial,28.42578,77.09168,osm
+Kamla Hospital,commercial,28.446446,76.9915827,osm
+Shri Balaji`S Multispeciality Hospital,commercial,28.4577278,76.9909818,osm
+Shri Balaji Hospital and Trauma Center,commercial,28.4409108,76.980076,osm
+"Sharma Hospital, Gurgaon",commercial,28.4618014,77.027472,osm
+"Shree Krishna Hospital, Gurgaon",commercial,28.4733303,77.003265,osm
+"Sparsh Hospital, Gurgaon",commercial,28.4701296,77.0226856,osm
+Ekta Hospital,commercial,28.3981002,77.0453744,osm
+Umkal Hospital,commercial,28.4715295,77.0733096,osm
+Vikas Hospital,commercial,28.5193612,77.1743007,osm
+Ayushman Hospital And Trauma Centre,commercial,28.4379095,77.0110461,osm
+Sona Devi Memorial Hospital and Trauma Centre,commercial,28.3966869,77.0464955,osm
+"Sneh Hospital, Gurgaon",commercial,28.4823666,77.0141546,osm
+"Rajiv Memorial Eye Infirmary, Jacobpura",commercial,28.4624763,77.0276631,osm
+"Shivam Hospital, Gurgaon",commercial,28.4574704,77.0536983,osm
+Mangalam Hospital and Heart Centre,commercial,28.4539854,77.0139308,osm
+"Saraswati Hospital, Gurgaon",commercial,28.4686477,77.0382518,osm
+Parashar Hospital,commercial,28.4539324,77.0204298,osm
+Shri Gobind Hospital,commercial,28.4580095,77.0164047,osm
+Lal Superspeciality Hospital,commercial,28.4577794,77.016731,osm
+Nidan Hospital and Trauma Centre,commercial,28.3728929,76.8956487,osm
+Gautam Hospital,commercial,28.442666,77.008965,osm
+Children Hospital,commercial,28.4750562,77.0348668,osm
+St Stephen's Hospital Health Care Facility,commercial,28.485499,77.104817,osm
+Deepan Hospital,commercial,28.5300327,77.0848898,osm
+Siyaram Hospital,commercial,28.3547767,76.9334283,osm
+Parsvnath Arcadia,commercial,28.4709565,77.0495866,osm
+Lamiwoods,commercial,28.4655333,77.0378834,osm
+Raj Cinema,commercial,28.4667442,77.036916,osm
+CRS Towers,commercial,28.4849179,77.06309,osm
+Navkriti Arcade,commercial,28.4247687,77.1095951,osm
+S.R.S. Hospital and Critical Care Unit,commercial,28.4033015,76.9881588,osm
+DLF Corporate Park,commercial,28.4829934,77.1051852,osm
+Club 5,commercial,28.4463463,77.0944334,osm
+Rico Auto Industries Ltd,commercial,28.4256663,77.0042882,osm
+Presidency Tower,commercial,28.4680576,77.0412568,osm
+Unitech Business Zone,commercial,28.4133358,77.0718685,osm
+M3M Corner Walk,commercial,28.4023205,77.0084432,osm
+Panchwati,commercial,28.4828363,77.0688387,osm
+Shubham Hospital,commercial,28.4567439,77.0210648,osm
+Fortis Memorial Research Institute / Fortis Vivekanand Hospital,commercial,28.4567857,77.0728657,osm
+Chirag Hospital Pvt. Ltd,commercial,28.4953531,77.0114095,osm
+Yashroop Medical Centre,commercial,28.4822505,77.0214477,osm
+Taneja Hospital,commercial,28.4663216,77.0138611,osm
+"Triveni Hospital, Gurgaon",commercial,28.463775,77.022188,osm
+Thukral Hospital,commercial,28.4814348,77.0653957,osm
+M Goel Hospital,commercial,28.4675082,77.027738,osm
+Sarvodya Hospital,commercial,28.4772418,77.0164105,osm
+Anahat Hospital,commercial,28.4832404,77.1071305,osm
+"Satyam Hospital, Gurgaon",commercial,28.4609572,77.0180051,osm
+Kamal Hospital and Maternity Centre,commercial,28.3887198,77.0501634,osm
+Samvit Health Care,commercial,28.4350285,77.0351672,osm
+"Jeevan Jyoti Hospital, Gurgaon",commercial,28.4763789,77.0350291,osm
+Kriti Hospital,commercial,28.4249603,77.093567,osm
+Rajendra Hospital,commercial,28.4495431,77.0211279,osm
+Sunrise Hospital,commercial,28.4428341,77.0106183,osm
+Rama Hospital & Nursing Home,commercial,28.4567256,77.0230785,osm
+Info City 2,commercial,28.4324898,77.0192006,osm
+Air India Training Academy,commercial,28.3986523,77.0092651,osm
+IndiGo,commercial,28.4552746,77.0698688,osm
+Ambience Mall Gurugram,commercial,28.5038,77.093,manual
+DLF Cyber City,commercial,28.4952,77.088,manual
+Nimai Tower,commercial,28.499866,77.0761212,osm
+Minarch Tower,commercial,28.4547093,77.0698699,osm
+Paradise Mall,commercial,28.411953,77.0507204,osm
+Madhyanchal,commercial,28.5460015,77.1471379,osm
+JNU Health Centre,commercial,28.5495066,77.1676082,osm
+SITE,commercial,28.5764608,77.0675724,osm
+Chaudhary Braham Prakash Ayurvedic Charak Sansthan,commercial,28.5721366,76.9336152,osm
+Research & Referal Hospital,commercial,28.5760974,77.1576228,osm
+DR KAPOOR'S Dental Care and Implant Centre,commercial,28.5095465,77.0450085,osm
+Hero MotoCorp,commercial,28.4355872,77.0148197,osm
+"Oil India Ltd,",commercial,28.5444543,77.1573317,osm
+ISID Campus,commercial,28.5436334,77.1482325,osm
+National Book Trust,commercial,28.5425661,77.1463771,osm
+Jain Hospital,commercial,28.4284279,77.058622,osm
+International Affairs & relations,commercial,28.5433036,77.146254,osm
+Unitech Infospace SEZ,commercial,28.5107196,77.0716978,osm
+RITES,commercial,28.4754966,77.0711274,osm
+Aarvy Hospital,commercial,28.457393,77.0300911,osm
+Safdarjung Hospital,commercial,28.5773794,77.1774582,osm
+Gendox Hospital,commercial,28.519682,77.1733997,osm
+"Esic Hospital, Gurugram",commercial,28.4681022,77.0013592,osm
+GH Gurgaon,commercial,28.474246,77.027117,osm
+Jain Sant Phool Chand Ji Charitable Hospital,commercial,28.4771569,77.0158929,osm
+Signature Tower,commercial,28.4664845,77.0581249,osm
+Airport Health Organization,commercial,28.5445057,77.115956,osm
+Moulsari Arcade,commercial,28.4949863,77.1034524,osm
+Building 7A,commercial,28.4926671,77.092011,osm
+Fortis Hospital,commercial,28.5192884,77.160342,osm
+Galaxy Mall and Hotel,commercial,28.4628578,77.0489151,osm
+Centre For Development of Telematics,commercial,28.4963531,77.1695231,osm
+Unitech Cyber Park,commercial,28.4430912,77.0561074,osm
+Educomp,commercial,28.5117165,77.0902292,osm
+Prakash Hospital,commercial,28.3561342,76.9377939,osm
+Airforce Hospital,commercial,28.4353706,77.0234423,osm
+Sadar Bazar,commercial,28.4605782,77.0290368,osm
+Unitech Business Park,commercial,28.4580858,77.0704006,osm
+Queen’s Multispeciality Hospital,commercial,28.3884907,76.9790268,osm
+Dr Vipin Maheshwari,commercial,28.4317572,77.0723439,osm
+Medanta,commercial,28.4635254,77.09453,osm
+Dr. Himani Yadav,commercial,28.4299657,77.0777145,osm
+Power Grid Corporation of India,commercial,28.4740868,77.0713372,osm
+Verizon Hospital,commercial,28.4399865,77.0705,osm
+"Apollo Cradle Hospital,Gurgaon",commercial,28.4786458,77.0474356,osm
+Unitech Trade Centre,commercial,28.4587096,77.0767601,osm
+IFFCO Tower,commercial,28.4699521,77.0719954,osm
+Mega Mall,commercial,28.4759236,77.09313,osm
+JMD Regent Square,commercial,28.4812296,77.0850177,osm
+Vipul's Agora,commercial,28.4793604,77.0853948,osm
+Vatika 1st India Place,commercial,28.4792816,77.0833856,osm
+LearningHour,commercial,28.4705308,77.0795243,osm
+Aryan Hospital,commercial,28.469559,77.0195045,osm
+"R K Hospital, Gurgaon",commercial,28.4930865,77.0088346,osm
+Sukhmani Hospital Pvt. Ltd,commercial,28.4342254,77.0481464,osm
+Vipul Tower,commercial,28.4646841,77.0790864,osm
+Jackson Hospital,commercial,28.4691487,77.0286816,osm
+"Gupta Hospital, Gurgaon",commercial,28.4644246,77.0268832,osm
+Verma E.N.T. Hospital,commercial,28.4652069,77.0280714,osm
+Ahooja Eye and Dental Institute Hospital,commercial,28.4639141,77.0305404,osm
+"Lotus Hospital, Gurgaon",commercial,28.4692855,77.034447,osm
+"Centre For Sight, Gurgaon, New Railway Road",commercial,28.4682869,77.0260289,osm
+Lall Nursing and Maternity Home,commercial,28.4667802,77.027307,osm
+Tirath Ram Hospitals Pvt Ltd,commercial,28.457085,77.0201597,osm
+Kathuria Hospital,commercial,28.4534132,77.0199907,osm
+Ahmed Hospital Multi Speciality,commercial,28.4580332,77.0412478,osm
+Prem Chiktsa Kendra,commercial,28.5739982,77.1773627,osm
+"Yadav Hospital, Gurgoan",commercial,28.4432185,77.0031618,osm
+Rathore Imt Hospital,commercial,28.3743344,76.9053349,osm
+Bhardwaj Hospital,commercial,28.4901894,77.0068324,osm
+M.S Hospital,commercial,28.4640593,77.0218559,osm
+"Mamta Hospital, Gurgaon",commercial,28.469724,77.0338102,osm
+Vaishnavi Nursing Home,commercial,28.4385723,77.0131141,osm
+Sikka Maternity And Surgical Center,commercial,28.4784222,77.0991004,osm
+Shri Ram Memorial Hospital,commercial,28.4936346,77.099508,osm
+Greenwood Plaza,commercial,28.4446928,77.0596646,osm
+Bhagwati Hospital,commercial,28.5241613,77.1788654,osm
+Arihant Hospital,commercial,28.4486051,77.0824411,osm
+Mata Sumitra Devi Hospital,commercial,28.5779214,77.0239288,osm
+Lord Krishna Hospital,commercial,28.4785067,77.0854291,osm
+Arunodaya Deseret Eye Hospital,commercial,28.4277743,77.1087643,osm
+Vinayak Hospital,commercial,28.4543386,77.0214859,osm
+Nangia Hospital Ent and Maternity,commercial,28.4558195,77.0218735,osm
+Fortis Memorial Hospital,hospital,28.4633,77.1012,manual
+Medanta Medicity,hospital,28.4126,77.0399,manual
+IMT Manesar,industrial,28.353,76.938,manual
