@@ -43,11 +43,11 @@ import logging as log
 app = Flask(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-GEOJSON_PATH   = "outputs/graph_reconstruction/traffic_state_scored.geojson"
+GEOJSON_PATH   = "v1/graph_reconstruction/traffic_state_scored.geojson"
 NET_PATH       = "outputs/networks/full.net.xml"
-ARRAYS_PKL     = "outputs/graph_reconstruction/gurugram_traffic_arrays.pkl"
+ARRAYS_PKL     = "v1/graph_reconstruction/gurugram_traffic_arrays.pkl"
 MOVEMENTS_PKL  = "outputs/networks/movements.pkl"
-CHAINS_PKL     = "outputs/graph_reconstruction/chains.pkl"
+CHAINS_PKL     = "v1/graph_reconstruction/chains.pkl"
 NODES_CSV_PATH = "gurugram_nodes.csv"
 CRITICALITY_PKL = "criticality_precomputed.pkl"
 # ── Services ──────────────────────────────────────────────────────────────────
