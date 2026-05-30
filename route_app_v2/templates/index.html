@@ -1,0 +1,1283 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gurugram Traffic Intelligence</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg:#0a0c10;--surface:#111318;--surface2:#181c24;--border:rgba(255,255,255,0.07);
+            --accent:#00d4ff;--accent2:#ff6b35;--green:#00e5a0;--red:#ff4466;
+            --purple:#b06bff;--text:#e8eaf0;--muted:#6b7280;
+            --mono:'Space Mono',monospace;--sans:'Syne',sans-serif;
+        }
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{background:var(--bg);color:var(--text);font-family:var(--sans);overflow:hidden}
+        #map{width:100vw;height:100vh;filter:brightness(0.9) saturate(0.7)}
+
+        #panel{position:absolute;top:20px;left:20px;z-index:999;width:330px;display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 40px);overflow-y:auto;scrollbar-width:none}
+        #panel::-webkit-scrollbar{display:none}
+        .card{background:rgba(17,19,24,0.92);border:1px solid var(--border);border-radius:14px;padding:18px 20px;backdrop-filter:blur(18px);box-shadow:0 8px 40px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.05)}
+
+        .header-card{display:flex;align-items:center;gap:12px;padding:14px 18px}
+        .logo-dot{width:36px;height:36px;border-radius:50%;background:conic-gradient(var(--accent),var(--accent2),var(--accent));animation:spin 6s linear infinite;flex-shrink:0}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .header-text h1{font-weight:800;font-size:15px;letter-spacing:0.04em}
+        .header-text p{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:2px;letter-spacing:0.06em}
+        .status-dot{width:6px;height:6px;border-radius:50%;background:var(--green);margin-left:auto;box-shadow:0 0 8px var(--green);animation:pulse 2s ease-in-out infinite}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+
+        .node-selector-block{display:flex;flex-direction:column;gap:6px}
+        .node-selector-row{display:flex;align-items:center;gap:8px}
+        .node-icon{width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:10px;font-family:var(--mono);font-weight:700;flex-shrink:0}
+        .node-icon.start{background:rgba(0,229,160,0.15);color:var(--green);border:1px solid rgba(0,229,160,0.3)}
+        .node-icon.end{background:rgba(255,68,102,0.15);color:var(--red);border:1px solid rgba(255,68,102,0.3)}
+        .search-combo{position:relative;flex:1}
+        .search-combo input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-family:var(--mono);font-size:10px;color:var(--text);outline:none;transition:border-color 0.2s}
+        .search-combo input::placeholder{color:var(--muted)}
+        .search-combo input:focus{border-color:rgba(0,212,255,0.4);box-shadow:0 0 0 2px rgba(0,212,255,0.08)}
+        .search-combo input.has-value{border-color:rgba(0,229,160,0.35);color:var(--green)}
+        .search-combo.end-combo input.has-value{border-color:rgba(255,68,102,0.35);color:var(--red)}
+        .combo-clear{position:absolute;right:7px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;line-height:1;padding:0;display:none}
+        .combo-clear:hover{color:var(--text)}
+        .combo-dropdown{position:absolute;top:calc(100% + 4px);left:0;right:0;background:rgba(17,19,24,0.97);border:1px solid var(--border);border-radius:10px;max-height:200px;overflow-y:auto;z-index:9999;display:none;box-shadow:0 12px 40px rgba(0,0,0,0.6);scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+        .combo-dropdown.open{display:block}
+        .combo-item{padding:8px 12px;font-family:var(--mono);font-size:10px;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:8px;transition:background 0.12s;border-bottom:1px solid rgba(255,255,255,0.03)}
+        .combo-item:last-child{border-bottom:none}
+        .combo-item:hover,.combo-item.highlighted{background:rgba(0,212,255,0.06);color:var(--text)}
+        .combo-item-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .combo-item-type{font-size:8px;padding:2px 5px;border-radius:4px;background:rgba(255,255,255,0.05);color:var(--muted);flex-shrink:0;text-transform:uppercase;letter-spacing:0.04em}
+        .combo-no-results{padding:12px;font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center}
+
+        .mode-tabs{display:flex;gap:4px;margin-bottom:12px}
+        .mode-tab{flex:1;padding:6px 0;border:1px solid var(--border);border-radius:7px;background:transparent;font-family:var(--mono);font-size:9px;color:var(--muted);cursor:pointer;letter-spacing:0.06em;transition:all 0.15s;text-align:center}
+        .mode-tab.active{background:rgba(0,212,255,0.1);border-color:rgba(0,212,255,0.3);color:var(--accent)}
+
+        .waypoints{display:flex;flex-direction:column;gap:8px}
+        .waypoint{display:flex;align-items:center;gap:10px}
+        .waypoint-icon{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:11px;font-family:var(--mono);font-weight:700;flex-shrink:0}
+        .waypoint-icon.start{background:rgba(0,229,160,0.15);color:var(--green);border:1px solid rgba(0,229,160,0.3)}
+        .waypoint-icon.end{background:rgba(255,68,102,0.15);color:var(--red);border:1px solid rgba(255,68,102,0.3)}
+        .waypoint-label{font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:0.04em;text-transform:uppercase}
+        .waypoint-value{font-family:var(--mono);font-size:11px;color:var(--text);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .waypoint-value.none{color:var(--muted);font-style:italic}
+        .connector-line{width:1px;height:10px;background:var(--border);margin-left:13px}
+
+        .slider-row{display:flex;align-items:center;gap:12px}
+        .hour-badge{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--accent);min-width:40px;letter-spacing:-1px}
+        .hour-label{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:0.08em}
+        .slider-wrap{flex:1}
+        input[type=range]{-webkit-appearance:none;width:100%;height:3px;background:var(--surface2);border-radius:2px;outline:none}
+        input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;box-shadow:0 0 10px var(--accent);transition:transform 0.15s}
+        input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.3)}
+        .tod-labels{display:flex;justify-content:space-between;margin-top:5px}
+        .tod-labels span{font-family:var(--mono);font-size:8px;color:var(--muted)}
+
+        .btn-row{display:flex;gap:8px}
+        .btn{flex:1;padding:10px;border:none;border-radius:9px;font-family:var(--sans);font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.04em;transition:all 0.18s}
+        .btn-primary{background:linear-gradient(135deg,var(--accent),#0099cc);color:#000}
+        .btn-primary:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,212,255,0.35)}
+        .btn-danger{background:rgba(255,68,102,0.12);color:var(--red);border:1px solid rgba(255,68,102,0.25)}
+        .btn-danger:hover{background:rgba(255,68,102,0.2);transform:translateY(-1px)}
+        .btn-toggle{flex:1;padding:10px;border-radius:9px;font-family:var(--sans);font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.04em;transition:all 0.18s;background:rgba(176,107,255,0.1);color:var(--purple);border:1px solid rgba(176,107,255,0.25)}
+        .btn-toggle:hover{background:rgba(176,107,255,0.2);transform:translateY(-1px)}
+        .btn-toggle.active{background:rgba(176,107,255,0.25);border-color:var(--purple);box-shadow:0 0 14px rgba(176,107,255,0.25)}
+        .btn-toggle:disabled{opacity:0.5;cursor:not-allowed;transform:none}
+
+        #result-card{display:none}
+        .result-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+        .metric{background:var(--surface2);border-radius:10px;padding:12px;border:1px solid var(--border)}
+        .metric-label{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px}
+        .metric-value{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--text);line-height:1}
+        .metric-value span{font-size:10px;color:var(--muted);font-weight:400}
+        .routing-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:20px;font-family:var(--mono);font-size:9px;letter-spacing:0.05em;margin-top:8px}
+        .routing-badge.movement{background:rgba(0,212,255,0.1);color:var(--accent);border:1px solid rgba(0,212,255,0.2)}
+        .routing-badge.fallback{background:rgba(255,107,53,0.1);color:var(--accent2);border:1px solid rgba(255,107,53,0.2)}
+        .badge-dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+
+        #removal-card{display:none}
+        .removal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+        .removal-title{font-weight:600;font-size:12px;color:var(--accent2);letter-spacing:0.04em}
+        .removal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:0;line-height:1}
+        .removal-close:hover{color:var(--text)}
+        .impact-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)}
+        .impact-row:last-child{border-bottom:none}
+        .impact-key{font-family:var(--mono);font-size:10px;color:var(--muted)}
+        .impact-val{font-family:var(--mono);font-size:11px;color:var(--text);font-weight:700}
+        .impact-val.warn{color:var(--purple)}.impact-val.danger{color:var(--red)}.impact-val.ok{color:var(--green)}
+
+        /* Hover sidebar */
+        #hover-card{
+            position:absolute;top:20px;right:20px;z-index:999;width:260px;
+            background:rgba(17,19,24,0.95);border:1px solid var(--border);
+            border-radius:14px;padding:16px 18px;backdrop-filter:blur(18px);
+            box-shadow:0 8px 40px rgba(0,0,0,0.5);
+            pointer-events:none;
+            opacity:0;
+            visibility:hidden;
+            transition:opacity 0.15s,visibility 0.15s;
+        }
+        #hover-card.visible{
+            opacity:1;
+            visibility:visible;
+        }
+        .hover-edge-id{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:0.06em;margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .hover-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+        .hover-metric{background:var(--surface2);border-radius:8px;padding:9px 10px}
+        .hover-metric.full{grid-column:span 2}
+        .hover-metric-label{font-family:var(--mono);font-size:8px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px}
+        .hover-metric-value{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--text);line-height:1}
+        .hover-metric-value span{font-size:9px;color:var(--muted);font-weight:400}
+        .hover-vc-bar{height:4px;background:var(--surface);border-radius:2px;margin-top:6px;overflow:hidden}
+        .hover-vc-fill{height:100%;border-radius:2px;transition:width 0.3s}
+        .hover-source-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:20px;font-family:var(--mono);font-size:8px;letter-spacing:0.05em;margin-top:8px}
+        .hover-source-badge.sensor{background:rgba(0,229,160,0.12);color:var(--green);border:1px solid rgba(0,229,160,0.25)}
+        .hover-source-badge.reconstructed{background:rgba(0,212,255,0.10);color:var(--accent);border:1px solid rgba(0,212,255,0.2)}
+        .hover-source-badge.prior{background:rgba(107,114,128,0.15);color:var(--muted);border:1px solid rgba(107,114,128,0.25)}
+        .hover-source-badge.geojson{background:rgba(255,107,53,0.10);color:var(--accent2);border:1px solid rgba(255,107,53,0.2)}
+        .hover-chain-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:20px;font-family:var(--mono);font-size:8px;background:rgba(176,107,255,0.1);color:var(--purple);border:1px solid rgba(176,107,255,0.2);margin-left:6px}
+
+        /* Criticality progress */
+        #crit-progress{position:absolute;bottom:60px;right:20px;z-index:999;width:240px;background:rgba(17,19,24,0.95);border:1px solid rgba(176,107,255,0.3);border-radius:12px;padding:14px 16px;backdrop-filter:blur(14px);display:none}
+        #crit-progress.visible{display:block}
+        .crit-prog-title{font-family:var(--mono);font-size:9px;color:var(--purple);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px}
+        .crit-prog-bar-wrap{height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;margin-bottom:6px}
+        .crit-prog-bar{height:100%;background:linear-gradient(90deg,#b06bff,#00d4ff);border-radius:3px;transition:width 0.4s}
+        .crit-prog-label{font-family:var(--mono);font-size:9px;color:var(--muted)}
+
+        /* Criticality legend */
+        #criticality-legend{position:absolute;bottom:60px;right:20px;z-index:998;background:rgba(17,19,24,0.92);border:1px solid var(--border);border-radius:12px;padding:14px 16px;backdrop-filter:blur(14px);display:none;min-width:220px}
+        #criticality-legend.visible{display:block}
+        .crit-legend-title{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px}
+        .crit-gradient-bar{height:8px;border-radius:4px;background:linear-gradient(to right,#1d4ed8,#f59e0b,#dc2626);margin-bottom:4px}
+        .crit-gradient-labels{display:flex;justify-content:space-between;font-family:var(--mono);font-size:8px;color:var(--muted)}
+        .crit-stats{margin-top:10px;font-family:var(--mono);font-size:9px;color:var(--muted);line-height:1.7}
+        .crit-stats b{color:var(--text)}
+
+        #legend-card{padding:14px 18px}
+        .legend-title{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:10px}
+        .legend-items{display:flex;flex-direction:column;gap:6px}
+        .legend-item{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:9px;color:var(--muted)}
+        .legend-line{width:24px;height:3px;border-radius:2px}
+
+        #hint{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(17,19,24,0.9);border:1px solid var(--border);border-radius:30px;padding:8px 18px;font-family:var(--mono);font-size:11px;color:var(--muted);backdrop-filter:blur(12px);z-index:999;pointer-events:none;white-space:nowrap}
+        #hint em{color:var(--accent);font-style:normal}
+
+        #loader{position:absolute;top:20px;right:20px;z-index:1000;background:rgba(17,19,24,0.9);border:1px solid var(--border);border-radius:10px;padding:10px 16px;display:none;align-items:center;gap:10px;backdrop-filter:blur(12px)}
+        .spinner{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite}
+        #loader span{font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:0.06em}
+
+        .leaflet-control-zoom{border:1px solid var(--border) !important;border-radius:10px !important;overflow:hidden}
+        .leaflet-control-zoom-in,.leaflet-control-zoom-out{background:rgba(17,19,24,0.9) !important;color:var(--text) !important;border:none !important}
+        .leaflet-control-zoom-in:hover,.leaflet-control-zoom-out:hover{background:var(--surface2) !important}
+        .leaflet-control-attribution{background:rgba(17,19,24,0.7) !important;color:var(--muted) !important;font-size:9px !important}
+        .leaflet-tooltip{background:rgba(17,19,24,0.95) !important;border:1px solid var(--border) !important;border-radius:8px !important;color:var(--text) !important;font-family:var(--mono) !important;font-size:11px !important;box-shadow:0 4px 20px rgba(0,0,0,0.4) !important;padding:8px 12px !important}
+        .leaflet-tooltip::before{display:none !important}
+
+        .divider{height:1px;background:var(--border);margin:4px 0}
+        .section-label{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:10px}
+        .resolving-badge{display:none;font-family:var(--mono);font-size:9px;color:var(--accent);margin-top:4px;padding-left:2px;letter-spacing:0.05em}
+        .resolving-badge.show{display:block}
+
+        /* ── Speed-floor modal ── */
+        #sf-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:10000;align-items:center;justify-content:center}
+        #sf-overlay.open{display:flex}
+        #sf-dialog{background:var(--surface);border:1px solid rgba(176,107,255,0.25);border-radius:16px;padding:28px 26px;width:300px;box-shadow:0 24px 80px rgba(0,0,0,0.7)}
+        .sf-title{font-family:var(--sans);font-size:14px;font-weight:700;color:var(--purple);margin-bottom:4px}
+        .sf-eid{font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .sf-label{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;display:block;margin-bottom:6px}
+        #sf-input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:11px 14px;font-family:var(--mono);font-size:20px;font-weight:700;color:var(--text);outline:none;margin-bottom:6px;transition:border-color 0.2s}
+        #sf-input:focus{border-color:rgba(176,107,255,0.5);box-shadow:0 0 0 2px rgba(176,107,255,0.1)}
+        .sf-hint{font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:20px}
+        .sf-btns{display:flex;gap:8px}
+        .sf-cancel{flex:1;padding:10px;border-radius:9px;background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--muted);font-family:var(--sans);font-size:12px;cursor:pointer;transition:all 0.15s}
+        .sf-cancel:hover{background:rgba(255,255,255,0.08);color:var(--text)}
+        .sf-confirm{flex:2;padding:10px;border-radius:9px;background:linear-gradient(135deg,var(--purple),#7730bb);border:none;color:#fff;font-family:var(--sans);font-size:12px;font-weight:700;cursor:pointer;transition:all 0.15s;letter-spacing:0.04em}
+        .sf-confirm:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(176,107,255,0.35)}
+
+        /* ── Export / action buttons in cards ── */
+        .card-actions{display:flex;align-items:center;gap:6px}
+        .btn-icon{background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer;font-family:var(--mono);font-size:9px;padding:3px 8px;letter-spacing:0.04em;transition:all 0.15s}
+        .btn-icon:hover{border-color:rgba(0,212,255,0.3);color:var(--accent)}
+
+        /* ── Flood panel ── */
+        .btn-flood{flex:1;padding:10px;border-radius:9px;font-family:var(--sans);font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.04em;transition:all 0.18s;background:rgba(0,180,255,0.08);color:#38bdf8;border:1px solid rgba(56,189,248,0.22)}
+        .btn-flood:hover{background:rgba(0,180,255,0.16);transform:translateY(-1px)}
+        .btn-flood.active{background:rgba(56,189,248,0.18);border-color:#38bdf8;box-shadow:0 0 14px rgba(56,189,248,0.22)}
+        #flood-card{display:none}
+        #flood-card.visible{display:block}
+        .flood-select{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-family:var(--mono);font-size:10px;color:var(--text);outline:none;margin-bottom:10px;transition:border-color 0.2s}
+        .flood-select:focus{border-color:rgba(56,189,248,0.4)}
+        .flood-thresh-row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+        .flood-thresh-val{font-family:var(--mono);font-size:14px;font-weight:700;color:#38bdf8;min-width:46px}
+        .flood-thresh-label{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:0.06em}
+        .flood-result{margin-top:10px;font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7}
+        .flood-result b{color:var(--text)}
+        .pump-list{display:flex;flex-direction:column;gap:5px;margin-top:8px;max-height:220px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+        .pump-item{background:var(--surface2);border-radius:8px;padding:8px 10px;border:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+        .pump-item-rank{font-family:var(--mono);font-size:9px;color:var(--muted);margin-right:8px;min-width:16px}
+        .pump-item-id{font-family:var(--mono);font-size:9px;color:var(--text);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .pump-item-score{font-family:var(--mono);font-size:12px;font-weight:700}
+        #flood-legend{position:absolute;bottom:60px;left:20px;z-index:998;background:rgba(17,19,24,0.92);border:1px solid rgba(56,189,248,0.25);border-radius:12px;padding:12px 14px;backdrop-filter:blur(14px);display:none;min-width:180px}
+        #flood-legend.visible{display:block}
+        .flood-legend-title{font-family:var(--mono);font-size:9px;color:#38bdf8;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px}
+        .flood-legend-item{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:4px}
+        .flood-swatch{width:16px;height:10px;border-radius:3px}
+
+        /* ── Capacity tune modal ── */
+        #ct-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:10000;align-items:center;justify-content:center}
+        #ct-overlay.open{display:flex}
+        #ct-dialog{background:var(--surface);border:1px solid rgba(0,212,255,0.22);border-radius:16px;padding:28px 26px;width:300px;box-shadow:0 24px 80px rgba(0,0,0,0.7)}
+        .ct-title{font-family:var(--sans);font-size:14px;font-weight:700;color:var(--accent);margin-bottom:4px}
+        .ct-eid{font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .ct-label{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;display:block;margin-bottom:6px}
+        .ct-val-row{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
+        #ct-pct{font-family:var(--mono);font-size:26px;font-weight:700;color:var(--accent)}
+        .ct-pct-unit{font-family:var(--mono);font-size:11px;color:var(--muted)}
+        #ct-slider{-webkit-appearance:none;width:100%;height:4px;background:var(--surface2);border-radius:2px;outline:none;margin-bottom:6px}
+        #ct-slider::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--accent);cursor:pointer;box-shadow:0 0 10px var(--accent)}
+        .ct-hint{font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:20px}
+        .ct-btns{display:flex;gap:8px}
+        .ct-cancel{flex:1;padding:10px;border-radius:9px;background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--muted);font-family:var(--sans);font-size:12px;cursor:pointer;transition:all 0.15s}
+        .ct-cancel:hover{background:rgba(255,255,255,0.08);color:var(--text)}
+        .ct-confirm{flex:2;padding:10px;border-radius:9px;background:linear-gradient(135deg,var(--accent),#0099cc);border:none;color:#000;font-family:var(--sans);font-size:12px;font-weight:700;cursor:pointer;transition:all 0.15s;letter-spacing:0.04em}
+        .ct-confirm:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,212,255,0.35)}
+    </style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="panel">
+    <div class="card header-card">
+        <div class="logo-dot"></div>
+        <div class="header-text"><h1>GURUGRAM TRAFFIC</h1><p>MOVEMENT-AWARE ROUTING ENGINE</p></div>
+        <div class="status-dot" title="Network live"></div>
+    </div>
+
+    <div class="card">
+        <div class="section-label">Route Selection</div>
+        <div class="mode-tabs">
+            <button class="mode-tab active" id="tab-node" onclick="switchMode('node')">⊙ Named Location</button>
+            <button class="mode-tab"        id="tab-map"  onclick="switchMode('map')">⊕ Map Click</button>
+        </div>
+        <div id="mode-node">
+            <div class="node-selector-block">
+                <div class="node-selector-row">
+                    <div class="node-icon start">A</div>
+                    <div class="search-combo" id="combo-start">
+                        <input type="text" id="search-start" placeholder="Search origin…" autocomplete="off" oninput="filterCombo('start')" onfocus="openCombo('start')" onkeydown="comboKeyNav(event,'start')">
+                        <button class="combo-clear" id="clear-start" onclick="clearCombo('start')">×</button>
+                        <div class="combo-dropdown" id="dropdown-start"></div>
+                    </div>
+                </div>
+                <div class="resolving-badge" id="resolving-start">⟳ Resolving nearest edge…</div>
+                <div class="connector-line" style="margin:4px 0 4px 12px"></div>
+                <div class="node-selector-row">
+                    <div class="node-icon end">B</div>
+                    <div class="search-combo end-combo" id="combo-end">
+                        <input type="text" id="search-end" placeholder="Search destination…" autocomplete="off" oninput="filterCombo('end')" onfocus="openCombo('end')" onkeydown="comboKeyNav(event,'end')">
+                        <button class="combo-clear" id="clear-end" onclick="clearCombo('end')">×</button>
+                        <div class="combo-dropdown" id="dropdown-end"></div>
+                    </div>
+                </div>
+                <div class="resolving-badge" id="resolving-end">⟳ Resolving nearest edge…</div>
+            </div>
+        </div>
+        <div id="mode-map" style="display:none">
+            <div class="waypoints">
+                <div class="waypoint"><div class="waypoint-icon start">A</div><div><div class="waypoint-label">Origin Edge</div><div class="waypoint-value none" id="start-lbl">Click a road to set origin</div></div></div>
+                <div class="connector-line"></div>
+                <div class="waypoint"><div class="waypoint-icon end">B</div><div><div class="waypoint-label">Destination Edge</div><div class="waypoint-value none" id="end-lbl">Click a road to set destination</div></div></div>
+            </div>
+        </div>
+        <div class="divider" style="margin:14px 0"></div>
+        <div class="section-label">Time of Day</div>
+        <div class="slider-row">
+            <div><div class="hour-badge" id="hour-display">12</div><div class="hour-label">HOUR</div></div>
+            <div class="slider-wrap">
+                <input type="range" id="hour" min="0" max="23" value="12">
+                <div class="tod-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>
+            </div>
+        </div>
+        <div class="divider" style="margin:14px 0"></div>
+        <div class="btn-row">
+            <button class="btn btn-primary" onclick="calculateRoute()">↗ Find Route</button>
+            <button class="btn btn-danger"  onclick="restoreEdges()">⊘ Restore</button>
+        </div>
+        <div class="btn-row" style="margin-top:8px">
+            <button class="btn btn-toggle" id="btn-heatmap" onclick="toggleCriticality()">⬡ Criticality Heatmap</button>
+        </div>
+        <div class="btn-row" style="margin-top:8px">
+            <button class="btn btn-flood" id="btn-flood" onclick="toggleFloodPanel()">◈ Flood & Hazard</button>
+        </div>
+    </div>
+
+    <div class="card" id="result-card">
+        <div class="section-label">Route Metrics</div>
+        <div class="result-grid">
+            <div class="metric"><div class="metric-label">Distance</div><div class="metric-value" id="r-dist">—<span> km</span></div></div>
+            <div class="metric"><div class="metric-label">Expected</div><div class="metric-value" id="r-exp">—<span> min</span></div></div>
+            <div class="metric" style="grid-column:span 2"><div class="metric-label">Time Range</div><div class="metric-value" id="r-range">—</div></div>
+        </div>
+        <div id="r-mode"></div>
+    </div>
+
+    <div class="card" id="removal-card">
+        <div class="removal-header">
+            <div class="removal-title">⚠ Edge Removal Impact</div>
+            <div class="card-actions">
+                <button class="btn-icon" id="btn-export" onclick="exportResult()" title="Download result as JSON">↓ JSON</button>
+                <button class="removal-close" onclick="closeRemoval()">×</button>
+            </div>
+        </div>
+        <div id="removal-details"></div>
+    </div>
+
+    <!-- Flood & Hazard card -->
+    <div class="card" id="flood-card">
+        <div class="section-label" style="color:#38bdf8">Flood & Hazard Masking</div>
+        <select class="flood-select" id="flood-file-select">
+            <option value="">— Select flood snapshot —</option>
+        </select>
+        <div class="flood-thresh-row">
+            <div>
+                <div class="flood-thresh-val" id="flood-thresh-display">0.00</div>
+                <div class="flood-thresh-label">DEPTH THRESHOLD (m)</div>
+            </div>
+            <div style="flex:1">
+                <input type="range" id="flood-thresh" min="0" max="0.5" step="0.01" value="0" style="width:100%">
+            </div>
+        </div>
+        <div class="btn-row">
+            <button class="btn" style="background:rgba(56,189,248,0.12);color:#38bdf8;border:1px solid rgba(56,189,248,0.25);font-size:11px" onclick="applyFloodMask()">◈ Apply Flood Mask</button>
+            <button class="btn" style="background:rgba(255,107,53,0.1);color:var(--accent2);border:1px solid rgba(255,107,53,0.22);font-size:11px" onclick="runPumpPriority()">⬆ Pump Priority</button>
+        </div>
+        <div class="flood-result" id="flood-result" style="display:none"></div>
+        <div class="pump-list" id="pump-list" style="display:none"></div>
+    </div>
+
+    <div class="card" id="legend-card">
+        <div class="legend-title">Map Legend</div>
+        <div class="legend-items">
+            <div class="legend-item"><div class="legend-line" style="background:var(--green)"></div>Origin road</div>
+            <div class="legend-item"><div class="legend-line" style="background:var(--red)"></div>Destination road</div>
+            <div class="legend-item"><div class="legend-line" style="background:#3b82f6;height:5px"></div>Active route</div>
+            <div class="legend-item"><div class="legend-line" style="background:#000;border:1px dashed #555"></div>Blocked road</div>
+            <div class="legend-item"><div class="legend-line" style="background:#dc2626"></div>Heavy reroute gain</div>
+            <div class="legend-item"><div class="legend-line" style="background:#1d4ed8"></div>Heavy flow loss</div>
+            <div class="legend-item"><div class="legend-line" style="background:var(--purple)"></div>Newly congested</div>
+        </div>
+    </div>
+</div>
+
+<!-- Hover sidebar -->
+<div id="hover-card" class="hover-card">
+    <div class="hover-edge-id" id="hov-edge-id">—</div>
+    <div class="hover-grid">
+        <div class="hover-metric"><div class="hover-metric-label">Flow</div><div class="hover-metric-value" id="hov-flow">—<span> veh/h</span></div></div>
+        <div class="hover-metric"><div class="hover-metric-label">Speed</div><div class="hover-metric-value" id="hov-speed">—<span> km/h</span></div></div>
+        <div class="hover-metric"><div class="hover-metric-label">Travel Time</div><div class="hover-metric-value" id="hov-tt">—<span> s</span></div></div>
+        <div class="hover-metric"><div class="hover-metric-label">Length</div><div class="hover-metric-value" id="hov-len">—<span> m</span></div></div>
+        <div class="hover-metric"><div class="hover-metric-label">Confidence</div><div class="hover-metric-value" id="hov-conf">—<span> %</span></div></div>
+        <div class="hover-metric"></div> <!-- Spacer to align the grid -->
+        <div class="hover-metric full" style="grid-column: 1 / -1;">
+            <div class="hover-metric-label">V/C Ratio</div>
+            <div class="hover-metric-value" id="hov-vc">—</div>
+            <div class="hover-vc-bar"><div class="hover-vc-fill" id="hov-vc-fill" style="width:0%;background:var(--green)"></div></div>
+        </div>
+    </div>
+    <div id="hov-badges"></div>
+</div>
+
+<!-- Criticality progress bar -->
+<div id="crit-progress">
+    <div class="crit-prog-title">⬡ Computing Criticality…</div>
+    <div class="crit-prog-bar-wrap"><div class="crit-prog-bar" id="crit-prog-bar" style="width:0%"></div></div>
+    <div class="crit-prog-label" id="crit-prog-label">Starting…</div>
+</div>
+
+<!-- Criticality legend (shown after done) -->
+<div id="criticality-legend">
+    <div class="crit-legend-title">Criticality Score</div>
+    <div class="crit-gradient-bar"></div>
+    <div class="crit-gradient-labels"><span>Low</span><span>Medium</span><span>High</span></div>
+    <div class="crit-stats" id="crit-stats"></div>
+</div>
+
+<!-- Speed-floor modal -->
+<div id="sf-overlay">
+    <div id="sf-dialog">
+        <div class="sf-title">⚡ Speed Floor</div>
+        <div class="sf-eid" id="sf-eid-label">—</div>
+        <label class="sf-label" for="sf-input">Minimum speed (km/h)</label>
+        <input type="number" id="sf-input" min="1" max="130" value="30" step="5">
+        <div class="sf-hint">Traffic exceeding this speed constraint will be rerouted.</div>
+        <div class="sf-btns">
+            <button class="sf-cancel" id="sf-cancel">Cancel</button>
+            <button class="sf-confirm" id="sf-confirm">Apply Floor</button>
+        </div>
+    </div>
+</div>
+
+<!-- Flood legend (bottom-left, shown when flood mask active) -->
+<div id="flood-legend">
+    <div class="flood-legend-title">◈ Flood Mask</div>
+    <div class="flood-legend-item"><div class="flood-swatch" style="background:rgba(56,189,248,0.45);border:1px solid #38bdf8"></div>Flood extent</div>
+    <div class="flood-legend-item"><div class="flood-swatch" style="background:#ef4444;border:1px dashed #f87171"></div>Flooded road (blocked)</div>
+    <div class="flood-legend-item" id="flood-legend-stats" style="color:var(--text);font-size:10px"></div>
+</div>
+
+<!-- Capacity tune modal -->
+<div id="ct-overlay">
+    <div id="ct-dialog">
+        <div class="ct-title">⊟ Capacity Tuning</div>
+        <div class="ct-eid" id="ct-eid-label">—</div>
+        <label class="ct-label" for="ct-slider">Lane capacity (% of original)</label>
+        <div class="ct-val-row"><span id="ct-pct">50</span><span class="ct-pct-unit">%</span></div>
+        <input type="range" id="ct-slider" min="10" max="95" value="50" step="5">
+        <div class="ct-hint">Excess flow above the new capacity is rerouted via alternate paths.</div>
+        <div class="ct-btns">
+            <button class="ct-cancel" id="ct-cancel">Cancel</button>
+            <button class="ct-confirm" id="ct-confirm">Apply</button>
+        </div>
+    </div>
+</div>
+
+<div id="loader"><div class="spinner"></div><span id="loader-text">CALCULATING...</span></div>
+<div id="hint"><em>Left-click</em> a road to select · <em>Right-click</em> to block/analyze removal</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+// ══════════════════════════════════════════════════════
+//  MAP INIT
+// ══════════════════════════════════════════════════════
+var map = L.map('map',{zoomControl:true, preferCanvas:true}).setView([28.4595,77.0266],13);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{attribution:'© OpenStreetMap, © CARTO',maxZoom:19}).addTo(map);
+map.zoomControl.setPosition('bottomright');
+
+// ══════════════════════════════════════════════════════
+//  GLOBAL STATE
+// ══════════════════════════════════════════════════════
+var startEdge=null,endEdge=null,startLayer=null,endLayer=null;
+var routeLayer=null,networkLayer=null,hitLayer=null;
+var blockedEdges=new Set();
+var selectionMode='node';
+var nodeMarkerStart=null,nodeMarkerEnd=null;
+var allNodes=[],comboHighlight={start:-1,end:-1},comboFiltered={start:[],end:[]};
+
+// KEY PERF: O(1) edge→layer map. Eliminates all eachLayer() loops.
+var _ELM={};          // edge_id → visual Leaflet layer
+var _DS={};           // edge_id → cached default style
+
+// Hover
+var _hoverTimer=null,_lastHover=null;
+
+// Criticality
+var critActive=false,critScores={};
+var _critPoll=null;
+
+// Last removal/speed-floor result (for JSON export)
+var lastRemovalResult=null;
+
+// Speed-floor modal state
+var _sfEid=null,_sfHour=null;
+(function(){
+    document.getElementById('sf-cancel').addEventListener('click',function(){
+        document.getElementById('sf-overlay').classList.remove('open');
+    });
+    document.getElementById('sf-confirm').addEventListener('click',function(){
+        var spd=parseFloat(document.getElementById('sf-input').value);
+        if(isNaN(spd)||spd<=0)return;
+        document.getElementById('sf-overlay').classList.remove('open');
+        doSpeedFloor(_sfEid,_sfHour,Math.max(1,spd));
+    });
+    document.getElementById('sf-input').addEventListener('keydown',function(e){
+        if(e.key==='Enter')document.getElementById('sf-confirm').click();
+        if(e.key==='Escape')document.getElementById('sf-cancel').click();
+    });
+    document.getElementById('sf-overlay').addEventListener('click',function(e){
+        if(e.target===this)this.classList.remove('open');
+    });
+})();
+
+// ── Capacity tune modal ──────────────────────────────────────────────────────
+var _ctEid=null,_ctHour=null;
+(function(){
+    var slider=document.getElementById('ct-slider');
+    slider.addEventListener('input',function(){document.getElementById('ct-pct').textContent=slider.value;});
+    document.getElementById('ct-cancel').addEventListener('click',function(){
+        document.getElementById('ct-overlay').classList.remove('open');
+    });
+    document.getElementById('ct-confirm').addEventListener('click',function(){
+        var factor=parseInt(slider.value)/100;
+        document.getElementById('ct-overlay').classList.remove('open');
+        doCapacityTune(_ctEid,_ctHour,factor);
+    });
+    document.getElementById('ct-overlay').addEventListener('click',function(e){
+        if(e.target===this)this.classList.remove('open');
+    });
+})();
+
+// ── Flood threshold slider ──────────────────────────────────────────────────
+document.getElementById('flood-thresh').addEventListener('input',function(){
+    document.getElementById('flood-thresh-display').textContent=parseFloat(this.value).toFixed(2);
+});
+
+// ══════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════
+function showLoader(t){document.getElementById('loader-text').textContent=t||'CALCULATING...';document.getElementById('loader').style.display='flex'}
+function hideLoader(){document.getElementById('loader').style.display='none'}
+function setHint(h){document.getElementById('hint').innerHTML=h}
+function fmtH(h){return String(h).padStart(2,'0')+':00'}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+
+document.getElementById('hour').addEventListener('input',function(e){
+    document.getElementById('hour-display').textContent=fmtH(parseInt(e.target.value));
+});
+
+// ══════════════════════════════════════════════════════
+//  MODE
+// ══════════════════════════════════════════════════════
+function switchMode(mode){
+    selectionMode=mode;
+    document.getElementById('tab-node').classList.toggle('active',mode==='node');
+    document.getElementById('tab-map').classList.toggle('active',mode==='map');
+    document.getElementById('mode-node').style.display=mode==='node'?'':'none';
+    document.getElementById('mode-map').style.display=mode==='map'?'':'none';
+    setHint(mode==='node'?'Search a <em>named location</em> to set origin / destination':'<em>Left-click</em> a road to select · <em>Right-click</em> to block');
+}
+
+// ══════════════════════════════════════════════════════
+//  NODES + COMBOBOX
+// ══════════════════════════════════════════════════════
+fetch('/nodes').then(r=>r.json()).then(n=>{allNodes=n}).catch(()=>{});
+
+function filterCombo(w){
+    var q=document.getElementById('search-'+w).value.trim().toLowerCase();
+    comboHighlight[w]=-1;
+    comboFiltered[w]=q?allNodes.filter(n=>n.name.toLowerCase().includes(q)||(n.type&&n.type.toLowerCase().includes(q))).slice(0,80):allNodes.slice(0,80);
+    renderDD(w);
+    document.getElementById('dropdown-'+w).classList.add('open');
+    document.getElementById('clear-'+w).style.display=q?'block':'none';
+}
+function openCombo(w){filterCombo(w)}
+function renderDD(w){
+    var dd=document.getElementById('dropdown-'+w),items=comboFiltered[w];
+    if(!items.length){dd.innerHTML='<div class="combo-no-results">No matches found</div>';return}
+    dd.innerHTML=items.map((n,i)=>'<div class="combo-item" onmousedown="selNode(event,\''+w+'\','+i+')"><span class="combo-item-name">'+esc(n.name)+'</span>'+(n.type?'<span class="combo-item-type">'+esc(n.type)+'</span>':'')+'</div>').join('');
+}
+function comboKeyNav(e,w){
+    var items=comboFiltered[w];
+    if(e.key==='ArrowDown'){e.preventDefault();comboHighlight[w]=Math.min(comboHighlight[w]+1,items.length-1);updHL(w)}
+    else if(e.key==='ArrowUp'){e.preventDefault();comboHighlight[w]=Math.max(comboHighlight[w]-1,0);updHL(w)}
+    else if(e.key==='Enter'){e.preventDefault();var i=comboHighlight[w];if(i>=0&&i<items.length)applyNode(w,items[i]);document.getElementById('dropdown-'+w).classList.remove('open')}
+    else if(e.key==='Escape'){document.getElementById('dropdown-'+w).classList.remove('open')}
+}
+function updHL(w){
+    document.getElementById('dropdown-'+w).querySelectorAll('.combo-item').forEach((el,i)=>el.classList.toggle('highlighted',i===comboHighlight[w]));
+    var h=document.getElementById('dropdown-'+w).querySelector('.highlighted');
+    if(h)h.scrollIntoView({block:'nearest'});
+}
+function selNode(e,w,i){e.preventDefault();var n=comboFiltered[w][i];if(n)applyNode(w,n);document.getElementById('dropdown-'+w).classList.remove('open')}
+function applyNode(w,node){
+    document.getElementById('search-'+w).value=node.name;
+    document.getElementById('search-'+w).classList.add('has-value');
+    document.getElementById('clear-'+w).style.display='block';
+    document.getElementById('resolving-'+w).classList.add('show');
+    placePin(w,node);
+    fetch('/nearest_edge?lat='+node.lat+'&lng='+node.lng).then(r=>r.json()).then(function(res){
+        document.getElementById('resolving-'+w).classList.remove('show');
+        if(res.error){setHint('⚠ Could not resolve edge');return}
+        setEdge(w,res.edge_id,node.name);
+    }).catch(()=>document.getElementById('resolving-'+w).classList.remove('show'));
+}
+function placePin(w,node){
+    var color=w==='start'?'#00e5a0':'#ff4466',label=w==='start'?'A':'B';
+    var icon=L.divIcon({className:'',html:'<div style="width:28px;height:28px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:'+color+';border:2px solid rgba(255,255,255,0.3);display:flex;align-items:center;justify-content:center;"><span style="transform:rotate(45deg);font-family:monospace;font-size:11px;font-weight:700;color:#000;">'+label+'</span></div>',iconSize:[28,28],iconAnchor:[14,28]});
+    if(w==='start'){if(nodeMarkerStart)map.removeLayer(nodeMarkerStart);nodeMarkerStart=L.marker([node.lat,node.lng],{icon}).bindTooltip(node.name).addTo(map)}
+    else{if(nodeMarkerEnd)map.removeLayer(nodeMarkerEnd);nodeMarkerEnd=L.marker([node.lat,node.lng],{icon}).bindTooltip(node.name).addTo(map)}
+    map.panTo([node.lat,node.lng],{animate:true,duration:0.6});
+}
+function setEdge(w,eid,name){
+    if(w==='start'){
+        if(startLayer&&_DS[startEdge])startLayer.setStyle(_DS[startEdge]);
+        startEdge=eid;var vl=_ELM[eid];if(vl){vl.setStyle({color:'#00e5a0',weight:5,opacity:1,dashArray:null});startLayer=vl}
+        setHint('Origin set: <em>'+name+'</em> · Now set destination');
+    }else{
+        if(endLayer&&_DS[endEdge])endLayer.setStyle(_DS[endEdge]);
+        endEdge=eid;var vl=_ELM[eid];if(vl){vl.setStyle({color:'#ff4466',weight:5,opacity:1,dashArray:null});endLayer=vl}
+        setHint('Destination set: <em>'+name+'</em> · Click <em>Find Route</em>');
+    }
+}
+function clearCombo(w){
+    document.getElementById('search-'+w).value='';
+    document.getElementById('search-'+w).classList.remove('has-value');
+    document.getElementById('clear-'+w).style.display='none';
+    document.getElementById('dropdown-'+w).classList.remove('open');
+    document.getElementById('resolving-'+w).classList.remove('show');
+    if(w==='start'){if(startLayer&&_DS[startEdge])startLayer.setStyle(_DS[startEdge]);startEdge=null;startLayer=null;if(nodeMarkerStart){map.removeLayer(nodeMarkerStart);nodeMarkerStart=null}}
+    else{if(endLayer&&_DS[endEdge])endLayer.setStyle(_DS[endEdge]);endEdge=null;endLayer=null;if(nodeMarkerEnd){map.removeLayer(nodeMarkerEnd);nodeMarkerEnd=null}}
+}
+document.addEventListener('click',function(e){['start','end'].forEach(w=>{var c=document.getElementById('combo-'+w);if(c&&!c.contains(e.target))document.getElementById('dropdown-'+w).classList.remove('open')})});
+document.getElementById('map').addEventListener('wheel',function(){document.getElementById('dropdown-start').classList.remove('open');document.getElementById('dropdown-end').classList.remove('open')},{passive:true});
+
+// ══════════════════════════════════════════════════════
+//  STYLE HELPERS — O(1), NO eachLayer()
+// ══════════════════════════════════════════════════════
+function defStyle(f){var vc=f.properties.vc_noon||0;return{color:vc>0.8?'#ef4444':vc>0.5?'#f59e0b':'#4b5563',weight:1.5,opacity:0.5}}
+
+// LOD: hide low-priority roads at low zoom to reduce Canvas stroke count.
+// tier 1 = motorway/trunk (always visible ≥11), tier 4 = residential (≥15).
+var _ROAD_TIER={'motorway':1,'motorway_link':1,'trunk':1,'trunk_link':1,
+                'primary':2,'primary_link':2,
+                'secondary':3,'secondary_link':3,'tertiary':3,'tertiary_link':3};
+var _TIER_ZOOM=[0,11,12,13,15]; // index = tier; zoom threshold to show
+
+function _lodOk(roadType,zoom){return zoom>=_TIER_ZOOM[_ROAD_TIER[roadType]||4];}
+
+function applyLOD(){
+    if(!networkLayer||!hitLayer)return;
+    var z=map.getZoom();
+    networkLayer.eachLayer(function(l){
+        var eid=l.feature.properties.id;
+        if(blockedEdges.has(eid)||floodCapacityTuned.has(eid))return; // keep flood styles
+        var ok=_lodOk(l.feature.properties.road_type,z);
+        l.setStyle(ok?(_DS[eid]||defStyle(l.feature)):{opacity:0,weight:0});
+    });
+    hitLayer.eachLayer(function(l){
+        var ok=_lodOk(l.feature.properties.road_type,z);
+        l.setStyle(ok?{color:'transparent',weight:20,opacity:0,fillOpacity:0}
+                     :{color:'transparent',weight:0, opacity:0,fillOpacity:0});
+    });
+}
+map.on('zoomend',applyLOD);
+
+// Reset a single edge to its default style
+function resetStyle(eid){var vl=_ELM[eid],st=_DS[eid];if(vl&&st)vl.setStyle(st)}
+
+// Reapply dashed-red to all currently-blocked edges (O(|blocked|))
+function maintainBlocked(){blockedEdges.forEach(function(bid){var vl=_ELM[bid];if(vl)vl.setStyle({color:'#ef4444',weight:4,dashArray:'6,4',opacity:0.9})})}
+
+// Reset all edges, then re-apply waypoint / blocked highlights (O(N) — only on user-triggered restore)
+function resetAll(){
+    Object.keys(_ELM).forEach(resetStyle);
+    maintainBlocked();
+    if(startEdge&&startLayer)startLayer.setStyle({color:'#00e5a0',weight:5,opacity:1,dashArray:null});
+    if(endEdge&&endLayer)endLayer.setStyle({color:'#ff4466',weight:5,opacity:1,dashArray:null});
+}
+
+// Dim non-blocked edges after a removal (O(N) — only on user right-click)
+function dimNonBlocked(){
+    Object.keys(_ELM).forEach(function(eid){
+        if(!blockedEdges.has(eid)&&eid!==startEdge&&eid!==endEdge)_ELM[eid].setStyle({opacity:0.08,weight:1});
+    });
+    maintainBlocked();
+    if(startEdge&&startLayer)startLayer.setStyle({color:'#00e5a0',weight:5,opacity:1,dashArray:null});
+    if(endEdge&&endLayer)endLayer.setStyle({color:'#ff4466',weight:5,opacity:1,dashArray:null});
+}
+
+// ══════════════════════════════════════════════════════
+//  HOVER SIDEBAR — fires on mouseenter (once per edge entry)
+// ══════════════════════════════════════════════════════
+function showHover(eid) {
+    if (_lastHover === eid) return;
+    _lastHover = eid;
+    clearTimeout(_hoverTimer);
+    if (critActive && critScores[eid] !== undefined) quickCritHover(eid);
+    _hoverTimer = setTimeout(function() {
+        var hr = parseInt(document.getElementById('hour').value);
+        fetch('/edge_info?edge=' + encodeURIComponent(eid) + '&hour=' + hr)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.error || _lastHover !== eid) return;
+                fillHover(eid, d);
+                document.getElementById('hover-card').classList.add('visible');
+            })
+            .catch(function(e) { console.warn('edge_info fetch failed', e); });
+    }, 140);
+}
+function hideHover(){
+    clearTimeout(_hoverTimer);
+    _lastHover = null;
+    document.getElementById('hover-card').classList.remove('visible');
+}
+
+function quickCritHover(eid){
+    var cs=critScores[eid],col=cs>0.66?'var(--red)':cs>0.33?'#f59e0b':'#1d4ed8';
+    document.getElementById('hov-edge-id').innerHTML='<span style="opacity:0.6">'+esc(eid)+'</span>';
+    ['hov-flow','hov-speed','hov-tt','hov-len','hov-conf'].forEach(id=>document.getElementById(id).innerHTML='—');
+    document.getElementById('hov-vc').innerHTML='—';document.getElementById('hov-vc-fill').style.width='0%';
+    document.getElementById('hov-badges').innerHTML='<div style="margin-top:4px;font-family:var(--mono);font-size:9px;color:var(--muted)">CRITICALITY &nbsp;<b style="color:'+col+';font-size:14px">'+(cs*100).toFixed(1)+'</b></div>';
+    document.getElementById('hover-card').classList.add('visible');
+}
+function fillHover(eid,d){
+    var critHtml='';
+    if(critActive&&critScores[eid]!==undefined){var cs=critScores[eid],col=cs>0.66?'var(--red)':cs>0.33?'#f59e0b':'#1d4ed8';critHtml='<div style="margin-top:8px;font-family:var(--mono);font-size:9px;color:var(--muted)">CRITICALITY &nbsp;<b style="color:'+col+';font-size:12px">'+(cs*100).toFixed(1)+'</b></div>'}
+    document.getElementById('hov-edge-id').innerHTML='<b style="color:var(--text)">'+(d.road_type||'road')+'</b> &nbsp;<span style="opacity:0.5">'+esc(eid)+'</span>'+(d.chain_len>1?'<span class="hover-chain-badge">chain ×'+d.chain_len+'</span>':'');
+    document.getElementById('hov-flow').innerHTML=d.flow_veh_h!==null?Math.round(d.flow_veh_h)+'<span> veh/h</span>':'—';
+    document.getElementById('hov-speed').innerHTML=d.speed_kmh!==null?d.speed_kmh.toFixed(1)+'<span> km/h</span>':'—';
+    document.getElementById('hov-tt').innerHTML=d.tt_s!==null?d.tt_s.toFixed(1)+'<span> s</span>':'—';
+    document.getElementById('hov-len').innerHTML=d.length_m!==undefined?Math.round(d.length_m)+'<span> m</span>':'—';
+    document.getElementById('hov-conf').innerHTML=d.confidence!==null?Math.round(d.confidence*100)+'<span> %</span>':'—';
+    var vc=d.vc_ratio;
+    if(vc!==null&&vc!==undefined){var pct=Math.min(vc*100,100),col=vc>0.85?'var(--red)':vc>0.6?'#f59e0b':'var(--green)';document.getElementById('hov-vc').innerHTML=vc.toFixed(3);document.getElementById('hov-vc-fill').style.width=pct+'%';document.getElementById('hov-vc-fill').style.background=col}
+    else{document.getElementById('hov-vc').innerHTML='—';document.getElementById('hov-vc-fill').style.width='0%'}
+    var src=d.data_source||'geojson';
+    document.getElementById('hov-badges').innerHTML='<span class="hover-source-badge '+src+'">'+(({sensor:'● SENSOR',reconstructed:'◌ RECONSTRUCTED',prior:'○ PRIOR',geojson:'◈ GEOJSON'})[src]||src.toUpperCase())+'</span>'+critHtml;
+}
+
+// ══════════════════════════════════════════════════════
+//  CRITICALITY HEATMAP — background thread + polling
+// ══════════════════════════════════════════════════════
+function toggleCriticality(){
+    if(critActive){offCrit();return}
+    var btn=document.getElementById('btn-heatmap');
+    btn.disabled=true;btn.textContent='⬡ Loading…';
+    document.getElementById('crit-progress').classList.add('visible');
+    document.getElementById('crit-prog-bar').style.width='0%';
+    document.getElementById('crit-prog-label').textContent='Starting computation…';
+    var hr=parseInt(document.getElementById('hour').value);
+    fetch('/criticality?hour='+hr).then(r=>r.json()).then(function(res){
+        if(res.error){critErr(res.error);return}
+        if(res.status==='done'){critDone(res);return}
+        _critPoll=setInterval(function(){pollCrit(hr)},1800);
+    }).catch(e=>critErr(String(e)));
+}
+function pollCrit(hr){
+    fetch('/criticality?hour='+hr).then(r=>r.json()).then(function(res){
+        if(res.error){clearInterval(_critPoll);critErr(res.error);return}
+        if(res.status==='running'){
+            var pct=res.pct||0;
+            document.getElementById('crit-prog-bar').style.width=pct+'%';
+            document.getElementById('crit-prog-label').textContent='Scored '+res.done+' / '+res.total+' edges ('+pct.toFixed(0)+'%)';
+        }else if(res.status==='done'){clearInterval(_critPoll);critDone(res)}
+    }).catch(()=>{});
+}
+function critDone(res){
+    critScores={};(res.scores||[]).forEach(s=>critScores[s.edge_id]=s.criticality);
+    applyCritStyles();critActive=true;
+    document.getElementById('crit-progress').classList.remove('visible');
+    document.getElementById('criticality-legend').classList.add('visible');
+    var btn=document.getElementById('btn-heatmap');btn.disabled=false;btn.textContent='⬡ Criticality Heatmap';btn.classList.add('active');
+    var top=res.scores&&res.scores[0];
+    document.getElementById('crit-stats').innerHTML=[
+        'Scored <b>'+res.total+'</b> edges',
+        top?'Top: <b>'+top.edge_id.slice(0,20)+'</b>':'',
+        top?'Score: <b>'+(top.criticality*100).toFixed(1)+'</b>':'',
+        top?'Delay: <b>'+top.total_delay_veh_h.toFixed(1)+' veh·h</b>':'',
+    ].filter(Boolean).join('<br>');
+    setHint('Criticality heatmap · hover edges · <em>Right-click</em> to block');
+}
+function critErr(msg){
+    clearInterval(_critPoll);
+    document.getElementById('crit-progress').classList.remove('visible');
+    var btn=document.getElementById('btn-heatmap');btn.disabled=false;btn.textContent='⬡ Criticality Heatmap';
+    setHint('⚠ Criticality failed: '+msg);
+}
+function offCrit(){
+    clearInterval(_critPoll);critActive=false;critScores={};
+    document.getElementById('btn-heatmap').classList.remove('active');
+    document.getElementById('btn-heatmap').disabled=false;
+    document.getElementById('btn-heatmap').textContent='⬡ Criticality Heatmap';
+    document.getElementById('criticality-legend').classList.remove('visible');
+    document.getElementById('crit-progress').classList.remove('visible');
+    resetAll();
+    setHint('<em>Left-click</em> a road to select · <em>Right-click</em> to block');
+}
+// Colour ramp: blue → amber → red
+function critCol(s){return s<0.5?lerpHex('#1d4ed8','#f59e0b',s/0.5):lerpHex('#f59e0b','#dc2626',(s-0.5)/0.5)}
+function lerpHex(a,b,t){var ah=parseInt(a.slice(1),16),bh=parseInt(b.slice(1),16);var r=Math.round(((ah>>16)&255)+(((bh>>16)&255)-((ah>>16)&255))*t);var g=Math.round(((ah>>8)&255)+(((bh>>8)&255)-((ah>>8)&255))*t);var bl=Math.round((ah&255)+((bh&255)-(ah&255))*t);return'#'+[r,g,bl].map(x=>x.toString(16).padStart(2,'0')).join('')}
+// O(N) — only runs once on button click, acceptable
+function applyCritStyles(){
+    Object.keys(_ELM).forEach(function(eid){
+        var s=critScores[eid];
+        _ELM[eid].setStyle(s===undefined?{color:'#1f2937',weight:1,opacity:0.2}:{color:critCol(s),weight:1.5+s*5,opacity:0.85});
+    });
+    maintainBlocked();
+}
+
+// ══════════════════════════════════════════════════════
+//  LOAD GEOJSON
+// ══════════════════════════════════════════════════════
+showLoader('LOADING NETWORK...');
+fetch('/geojson_lite').then(r=>r.json()).then(function(data){
+    hideLoader();
+
+    networkLayer=L.geoJSON(data,{
+        style:function(f){return defStyle(f)},
+        onEachFeature:function(f,layer){
+            var eid=f.properties.id;
+            _ELM[eid]=layer;_DS[eid]=defStyle(f);
+            layer.bindTooltip(function(){
+                var hr=parseInt(document.getElementById('hour').value),p=f.properties;
+                var tt=p.travel_time_s?p.travel_time_s[hr]:null,spd=p.speed_kmh?p.speed_kmh[hr]:null,vc=p.vc_ratio?p.vc_ratio[hr]:null;
+                return '<b>'+p.id+'</b><br>'+(p.road_type?'Type: '+p.road_type+'<br>':'')+(tt!==null?'TT: '+tt.toFixed(1)+'s<br>':'')+(spd!==null?'Speed: '+spd.toFixed(1)+' km/h<br>':'')+(vc!==null?'V/C: '+vc.toFixed(2)+'<br>':'')+'<span style="color:#6b7280;font-size:9px">Right-click to analyze removal</span>';
+            },{sticky:true});
+        }
+    }).addTo(map);
+
+    // Invisible thick hit layer — for reliable mouse events on thin lines
+    hitLayer=L.geoJSON(data,{
+        style:()=>({color:'transparent',weight:20,opacity:0,fillOpacity:0}),
+        onEachFeature:function(f,layer){
+            var eid=f.properties.id;
+
+            // MOUSEENTER fires once when pointer enters edge, not on every pixel move
+            layer.on('mouseover', function() { showHover(eid); });
+            layer.on('mouseout',  function() { hideHover(); });
+
+            // RIGHT-CLICK: block chain + removal analysis
+            layer.on('contextmenu', function(e) {
+                e.originalEvent.preventDefault();
+                var hour = parseInt(document.getElementById('hour').value);
+                if (blockedEdges.has(eid)) return;
+            
+                // Show context menu: Block/Remove OR Speed Floor
+                showContextMenu(e.originalEvent, eid, hour);
+            });
+
+            // LEFT-CLICK: set start/end (map mode)
+            layer.on('click',function(){
+                if(selectionMode!=='map')return;
+                if(blockedEdges.has(eid))return;
+                var vl=_ELM[eid];
+                if(!startEdge||(startEdge&&endEdge)){
+                    if(startLayer&&_DS[startEdge])startLayer.setStyle(_DS[startEdge]);
+                    if(endLayer&&_DS[endEdge])endLayer.setStyle(_DS[endEdge]);
+                    if(routeLayer){map.removeLayer(routeLayer);routeLayer=null}
+                    hideResultCard();
+                    startEdge=eid;startLayer=vl;endEdge=null;endLayer=null;
+                    if(vl)vl.setStyle({color:'#00e5a0',weight:5,opacity:1,dashArray:null});
+                    setHint('<em>Now click</em> a destination road · <em>Right-click</em> to block');
+                }else{
+                    endEdge=eid;endLayer=vl;
+                    if(vl)vl.setStyle({color:'#ff4466',weight:5,opacity:1,dashArray:null});
+                    setHint('<em>Route ready</em> — click Find Route');
+                }
+                updWP();
+            });
+        }
+    }).addTo(map);
+
+    setHint('<em>Search</em> a named location or <em>click</em> roads · <em>Right-click</em> to block');
+    applyLOD(); // apply initial zoom-based visibility
+}).catch(()=>{hideLoader();setHint('⚠ Failed to load network data')});
+
+// ══════════════════════════════════════════════════════
+//  UI HELPERS
+// ══════════════════════════════════════════════════════
+function updWP(){
+    var sl=document.getElementById('start-lbl'),el=document.getElementById('end-lbl');
+    if(startEdge){sl.textContent=startEdge;sl.classList.remove('none')}else{sl.textContent='Click a road to set origin';sl.classList.add('none')}
+    if(endEdge){el.textContent=endEdge;el.classList.remove('none')}else{el.textContent='Click a road to set destination';el.classList.add('none')}
+}
+function hideResultCard(){document.getElementById('result-card').style.display='none'}
+function showRemoval(res){
+    document.getElementById('removal-card').style.display='block';
+    var cc=res.n_newly_congested>5?'danger':res.n_newly_congested>0?'warn':'ok';
+    var dc=res.total_delay_veh_h>10?'danger':res.total_delay_veh_h>2?'warn':'ok';
+    document.getElementById('removal-details').innerHTML=
+        '<div class="impact-row"><span class="impact-key">Displaced flow</span><span class="impact-val">'+res.displaced_flow.toFixed(0)+' veh/h</span></div>'+
+        '<div class="impact-row"><span class="impact-key">Rerouted via</span><span class="impact-val">'+res.reroute_pct.toFixed(0)+'% · '+res.paths.length+' paths</span></div>'+
+        '<div class="impact-row"><span class="impact-key">New congestion</span><span class="impact-val '+cc+'">'+res.n_newly_congested+' edges</span></div>'+
+        '<div class="impact-row"><span class="impact-key">Extra delay</span><span class="impact-val '+dc+'">'+res.total_delay_veh_h.toFixed(2)+' veh·h</span></div>';
+}
+function closeRemoval(){document.getElementById('removal-card').style.display='none'}
+
+// ══════════════════════════════════════════════════════
+//  RESTORE — await server ACK before resetting UI
+// ══════════════════════════════════════════════════════
+function restoreEdges(){
+    fetch('/restore').then(r=>r.json()).then(function(){
+        blockedEdges.clear();
+        if(window.removalLayer){map.removeLayer(window.removalLayer);window.removalLayer=null}
+        // Also clear flood layer and flood-blocked edges
+        if(floodLayer){map.removeLayer(floodLayer);floodLayer=null;}
+        floodEdgesBlocked.clear();
+        floodCapacityTuned.clear();
+        document.getElementById('flood-legend').classList.remove('visible');
+        document.getElementById('flood-result').style.display='none';
+        document.getElementById('pump-list').style.display='none';
+        closeRemoval();
+        if(critActive)applyCritStyles();else resetAll();
+        if(routeLayer){map.removeLayer(routeLayer);routeLayer=null;hideResultCard()}
+        setHint('<em>Left-click</em> a road to select · <em>Right-click</em> to block/analyze removal');
+    });
+}
+
+// ══════════════════════════════════════════════════════
+//  ROUTE
+// ══════════════════════════════════════════════════════
+function calculateRoute(){
+    if(!startEdge||!endEdge){setHint('⚠ Select both an <em>origin</em> and <em>destination</em> first');return}
+    var hr=document.getElementById('hour').value;
+    var blocked=Array.from(blockedEdges).map(encodeURIComponent).join(',');
+    showLoader('ROUTING...');
+    fetch('/route?start='+encodeURIComponent(startEdge)+'&end='+encodeURIComponent(endEdge)+'&hour='+hr+'&blocked='+blocked)
+        .then(r=>r.json()).then(function(res){
+            hideLoader();
+            if(res.error){setHint('⚠ '+res.error);return}
+            if(routeLayer)map.removeLayer(routeLayer);
+            routeLayer=L.geoJSON(res.geometry,{style:{color:'#3b82f6',weight:6,opacity:0.9}}).addTo(map);
+            map.fitBounds(routeLayer.getBounds(),{padding:[60,60]});
+            document.getElementById('r-dist').innerHTML=(res.dist_m/1000).toFixed(2)+'<span> km</span>';
+            document.getElementById('r-exp').innerHTML=(res.time_expected_s/60).toFixed(1)+'<span> min</span>';
+            document.getElementById('r-range').innerHTML=(res.time_range_s[0]/60).toFixed(1)+'<span> – </span>'+(res.time_range_s[1]/60).toFixed(1)+'<span> min</span>';
+            var isM=res.routing_mode==='movement_graph';
+            document.getElementById('r-mode').innerHTML='<div class="routing-badge '+(isM?'movement':'fallback')+'"><div class="badge-dot"></div>'+(isM?'MOVEMENT-AWARE':'NX FALLBACK')+' ROUTING</div>';
+            document.getElementById('result-card').style.display='block';
+            setHint('Route calculated · <em>Right-click</em> roads to simulate closures');
+        }).catch(()=>{hideLoader();setHint('⚠ Routing failed — check server connection')});
+}
+
+// Context menu for right-click: choose removal vs. speed floor
+var _ctxMenu = null;
+function showContextMenu(evt, eid, hour) {
+    removeCtxMenu();
+    var menu = document.createElement('div');
+    menu.id = '_ctx';
+    menu.style.cssText = 'position:fixed;z-index:9999;background:rgba(17,19,24,0.97);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:6px 0;box-shadow:0 8px 32px rgba(0,0,0,0.6);min-width:200px;font-family:var(--mono);font-size:11px;';
+    menu.style.left = evt.clientX + 'px';
+    menu.style.top  = evt.clientY + 'px';
+
+    var items = [
+        { label: '⊘  Block & Remove Edge',       fn: function() { doRemoval(eid, hour); } },
+        { label: '⚡  Set Speed Floor…',           fn: function() { promptSpeedFloor(eid, hour); } },
+        { label: '⊟  Reduce Capacity…',           fn: function() { promptCapacityTune(eid, hour); } }
+    ];
+    items.forEach(function(it) {
+        var el = document.createElement('div');
+        el.textContent = it.label;
+        el.style.cssText = 'padding:9px 16px;cursor:pointer;color:var(--muted);transition:background 0.12s;white-space:nowrap;';
+        el.onmouseenter = function() { el.style.background = 'rgba(0,212,255,0.06)'; el.style.color = 'var(--text)'; };
+        el.onmouseleave = function() { el.style.background = ''; el.style.color = 'var(--muted)'; };
+        el.onclick = function() { removeCtxMenu(); it.fn(); };
+        menu.appendChild(el);
+    });
+    document.body.appendChild(menu);
+    _ctxMenu = menu;
+    setTimeout(function() { document.addEventListener('click', removeCtxMenu, { once: true }); }, 10);
+}
+function removeCtxMenu() { if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; } }
+
+// Extracted removal logic (was inline in contextmenu handler)
+function doRemoval(eid, hour) {
+    var chainEids = [];
+    showLoader('RESOLVING CHAIN...');
+    fetch('/chain?edge=' + encodeURIComponent(eid))
+        .then(r => r.json())
+        .then(function(cr) {
+            chainEids = cr.chain || [eid];
+            chainEids.forEach(function(cid) {
+                blockedEdges.add(cid);
+                var vl = _ELM[cid];
+                if (vl) vl.setStyle({ color: '#ef4444', weight: 4, dashArray: '6,4', opacity: 0.9 });
+            });
+            if (chainEids.includes(startEdge)) { startEdge = null; startLayer = null; clearCombo('start'); updWP(); }
+            if (chainEids.includes(endEdge))   { endEdge   = null; endLayer   = null; clearCombo('end');   updWP(); }
+            showLoader('SIMULATING REMOVAL...');
+            return fetch('/removal?edge=' + encodeURIComponent(eid) + '&hour=' + hour);
+        })
+        .then(r => { if (!r.ok) throw new Error(r.status === 503 ? 'Service loading, try again shortly' : 'HTTP ' + r.status); return r.json(); })
+        .then(function(res) {
+            hideLoader();
+            if (res.error) { setHint('⚠ ' + res.error); return; }
+            lastRemovalResult = res;
+            dimNonBlocked();
+            applyDeltaLayer(res);
+            showRemoval(res);
+        })
+        .catch(function(err) {
+            hideLoader(); setHint('⚠ ' + (err.message || 'Removal simulation failed'));
+            chainEids.forEach(id => { blockedEdges.delete(id); resetStyle(id); });
+        });
+}
+
+// Speed floor: open the modal (replaces the browser prompt)
+function promptSpeedFloor(eid, hour) {
+    _sfEid=eid; _sfHour=hour;
+    document.getElementById('sf-eid-label').textContent=eid;
+    document.getElementById('sf-input').value='30';
+    document.getElementById('sf-overlay').classList.add('open');
+    setTimeout(function(){
+        var inp=document.getElementById('sf-input');
+        inp.focus();inp.select();
+    },60);
+}
+
+// Perform the actual speed-floor fetch + render
+function doSpeedFloor(eid, hour, minSpd) {
+    showLoader('APPLYING SPEED FLOOR...');
+    fetch('/speed_floor?edge='+encodeURIComponent(eid)+'&hour='+hour+'&min_speed='+minSpd)
+        .then(function(r){return r.json()})
+        .then(function(res){
+            hideLoader();
+            if(res.error){setHint('⚠ '+res.error);return}
+            lastRemovalResult=res;
+            dimNonBlocked();
+            applyDeltaLayer(res);
+            document.getElementById('removal-card').style.display='block';
+            var cc=res.n_newly_congested>5?'danger':res.n_newly_congested>0?'warn':'ok';
+            var dc=res.total_delay_veh_h>10?'danger':res.total_delay_veh_h>2?'warn':'ok';
+            document.getElementById('removal-details').innerHTML=
+                '<div style="font-family:var(--mono);font-size:9px;color:var(--purple);margin-bottom:10px;letter-spacing:0.06em">⚡ SPEED FLOOR · '+minSpd.toFixed(0)+' KM/H</div>'+
+                (res.warning?'<div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:8px">'+esc(res.warning)+'</div>':'')+
+                '<div class="impact-row"><span class="impact-key">Displaced flow</span><span class="impact-val">'+res.displaced_flow.toFixed(0)+' veh/h</span></div>'+
+                '<div class="impact-row"><span class="impact-key">Rerouted via</span><span class="impact-val">'+res.reroute_pct.toFixed(0)+'% · '+res.paths.length+' paths</span></div>'+
+                '<div class="impact-row"><span class="impact-key">New congestion</span><span class="impact-val '+cc+'">'+res.n_newly_congested+' edges</span></div>'+
+                '<div class="impact-row"><span class="impact-key">Extra delay</span><span class="impact-val '+dc+'">'+res.total_delay_veh_h.toFixed(2)+' veh·h</span></div>';
+            setHint('Speed floor applied — hover edges · <em>Right-click</em> for more');
+        })
+        .catch(function(err){hideLoader();setHint('⚠ '+(err.message||'Speed floor failed'))});
+}
+
+// Export last removal/speed-floor result as JSON
+function exportResult(){
+    if(!lastRemovalResult)return;
+    var ts=new Date().toISOString().slice(0,19).replace(/:/g,'-');
+    var fname='removal_h'+(lastRemovalResult.hour||'X')+'_'+ts+'.json';
+    var blob=new Blob([JSON.stringify(lastRemovalResult,null,2)],{type:'application/json'});
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=fname;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+// ══════════════════════════════════════════════════════
+//  CAPACITY TUNING
+// ══════════════════════════════════════════════════════
+function promptCapacityTune(eid, hour) {
+    _ctEid=eid; _ctHour=hour;
+    document.getElementById('ct-eid-label').textContent=eid;
+    document.getElementById('ct-slider').value=50;
+    document.getElementById('ct-pct').textContent='50';
+    document.getElementById('ct-overlay').classList.add('open');
+}
+
+function doCapacityTune(eid, hour, factor) {
+    showLoader('APPLYING CAPACITY TUNE...');
+    fetch('/capacity_tune?edge='+encodeURIComponent(eid)+'&hour='+hour+'&capacity_factor='+factor)
+        .then(function(r){return r.json();})
+        .then(function(res){
+            hideLoader();
+            if(res.error){setHint('⚠ '+res.error);return;}
+            lastRemovalResult=res;
+            dimNonBlocked();
+            applyDeltaLayer(res);
+            document.getElementById('removal-card').style.display='block';
+            var cc=res.n_newly_congested>5?'danger':res.n_newly_congested>0?'warn':'ok';
+            var dc=res.total_delay_veh_h>10?'danger':res.total_delay_veh_h>2?'warn':'ok';
+            document.getElementById('removal-details').innerHTML=
+                '<div style="font-family:var(--mono);font-size:9px;color:var(--accent);margin-bottom:10px;letter-spacing:0.06em">⊟ CAPACITY TUNE · '+(factor*100).toFixed(0)+'% OF ORIGINAL</div>'+
+                (res.warning?'<div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:8px">'+esc(res.warning)+'</div>':'')+
+                '<div class="impact-row"><span class="impact-key">Overflow displaced</span><span class="impact-val">'+res.displaced_flow.toFixed(0)+' veh/h</span></div>'+
+                '<div class="impact-row"><span class="impact-key">Rerouted via</span><span class="impact-val">'+res.reroute_pct.toFixed(0)+'% · '+res.paths.length+' paths</span></div>'+
+                '<div class="impact-row"><span class="impact-key">New congestion</span><span class="impact-val '+cc+'">'+res.n_newly_congested+' edges</span></div>'+
+                '<div class="impact-row"><span class="impact-key">Extra delay</span><span class="impact-val '+dc+'">'+res.total_delay_veh_h.toFixed(2)+' veh·h</span></div>';
+            setHint('Capacity tuned — hover edges · <em>Right-click</em> for more');
+        })
+        .catch(function(err){hideLoader();setHint('⚠ '+(err.message||'Capacity tune failed'));});
+}
+
+// ══════════════════════════════════════════════════════
+//  FLOOD & HAZARD MASKING
+// ══════════════════════════════════════════════════════
+var floodPanelOpen=false,floodLayer=null,floodEdgesBlocked=new Set(),floodCapacityTuned=new Set();
+
+// Load flood file list on startup
+fetch('/flood_files').then(function(r){return r.json();}).then(function(res){
+    var sel=document.getElementById('flood-file-select');
+    (res.files||[]).forEach(function(f){
+        var opt=document.createElement('option');
+        opt.value=f.file; opt.textContent=f.label;
+        sel.appendChild(opt);
+    });
+}).catch(function(){});
+
+function toggleFloodPanel(){
+    floodPanelOpen=!floodPanelOpen;
+    document.getElementById('flood-card').classList.toggle('visible',floodPanelOpen);
+    document.getElementById('btn-flood').classList.toggle('active',floodPanelOpen);
+}
+
+// Poll /task/<taskId> every `interval` ms until status != "running".
+function _pollTask(taskId,onDone,onError,interval){
+    interval=interval||1200;
+    function check(){
+        fetch('/task/'+taskId)
+            .then(function(r){return r.json();})
+            .then(function(t){
+                if(t.status==='done'){onDone(t);}
+                else if(t.status==='error'){onError(new Error(t.error||'Task failed'));}
+                else{setTimeout(check,interval);}
+            })
+            .catch(onError);
+    }
+    setTimeout(check,interval);
+}
+
+function _applyFloodResult(ar){
+    if(ar.error){setHint('⚠ '+ar.error);return;}
+    (ar.hard_blocked||[]).forEach(function(e){
+        var eid=e.edge_id;
+        floodEdgesBlocked.add(eid);
+        blockedEdges.add(eid);
+        if(_ELM[eid])_ELM[eid].setStyle({color:'#ef4444',weight:4,dashArray:'6,4',opacity:0.95});
+    });
+    (ar.capacity_tuned||[]).forEach(function(e){
+        var eid=e.edge_id;
+        floodCapacityTuned.add(eid);
+        floodEdgesBlocked.add(eid);
+        var col=e.capacity_factor<=0.10?'#f97316':'#f59e0b';
+        if(_ELM[eid])_ELM[eid].setStyle({color:col,weight:3,dashArray:'4,3',opacity:0.9});
+    });
+    var fr=document.getElementById('flood-result');
+    fr.innerHTML='<b>'+ar.n_hard_blocked+'</b> roads blocked · <b>'+ar.n_capacity_tuned+'</b> partially flooded<br>'
+        +'<span style="opacity:0.6;font-size:10px">Travel times updated — routes will reflect flood congestion</span>';
+    document.getElementById('flood-legend-stats').innerHTML=
+        '<b>'+ar.n_hard_blocked+'</b> blocked · <b>'+ar.n_capacity_tuned+'</b> congested';
+    setHint('Flood applied — '+ar.n_hard_blocked+' blocked, '+ar.n_capacity_tuned+' congested · route to see impact');
+}
+
+function applyFloodMask(){
+    var fname=document.getElementById('flood-file-select').value;
+    if(!fname){setHint('⚠ Select a flood snapshot first');return;}
+    var thresh=parseFloat(document.getElementById('flood-thresh').value);
+    var hour=parseInt(document.getElementById('hour').value);
+    var q='?file='+encodeURIComponent(fname)+'&hour='+hour+'&threshold='+thresh;
+    showLoader('APPLYING FLOOD MASK...');
+
+    // Phase 1 — fast overlay: get geojson + edge list
+    fetch('/flood_mask'+q)
+        .then(function(r){return r.json();})
+        .then(function(res){
+            if(res.error){hideLoader();setHint('⚠ '+res.error);return;}
+            clearFloodLayer();
+            if(res.flood_geojson&&res.flood_geojson.features&&res.flood_geojson.features.length){
+                floodLayer=L.geoJSON(res.flood_geojson,{
+                    style:function(){return{color:'#38bdf8',weight:1.5,opacity:0.8,fillColor:'#0ea5e9',fillOpacity:0.25};},
+                    onEachFeature:function(f,l){
+                        var props=f.properties,depKey=Object.keys(props).find(function(k){return k!=='geo_code';});
+                        var dep=depKey?props[depKey].toFixed(3):'?';
+                        l.bindTooltip('Flood depth: '+dep+' m',{sticky:true});
+                    }
+                }).addTo(map);
+            }
+            var fr=document.getElementById('flood-result');
+            fr.style.display='block';
+            fr.innerHTML='<b>'+res.n_flooded+'</b> edges in flood extent — running depth simulation…';
+            document.getElementById('flood-legend').classList.add('visible');
+            document.getElementById('flood-legend-stats').innerHTML='<b>'+res.n_flooded+'</b> roads affected';
+            document.getElementById('pump-list').style.display='none';
+            setHint('Flood overlay applied — simulating depth-weighted impact…');
+
+            // Phase 2 — async: fires immediately, polls until done
+            return fetch('/flood_apply'+q).then(function(r){return r.json();});
+        })
+        .then(function(init){
+            if(!init)return;
+            if(init.error){hideLoader();setHint('⚠ '+init.error);return;}
+            // task_id=null means the server handled it synchronously (empty result)
+            if(!init.task_id){hideLoader();_applyFloodResult(init);return;}
+            _pollTask(init.task_id,function(ar){hideLoader();_applyFloodResult(ar);},
+                function(err){hideLoader();setHint('⚠ '+(err.message||'Flood apply failed'));});
+        })
+        .catch(function(err){hideLoader();setHint('⚠ '+(err.message||'Flood mask failed'));});
+}
+
+function clearFloodLayer(){
+    if(floodLayer){map.removeLayer(floodLayer);floodLayer=null;}
+    floodEdgesBlocked.forEach(function(eid){
+        blockedEdges.delete(eid);
+        resetStyle(eid);
+    });
+    floodEdgesBlocked.clear();
+    floodCapacityTuned.clear();
+    document.getElementById('flood-legend').classList.remove('visible');
+}
+
+function _renderPumpScores(res){
+    if(res.error){setHint('⚠ '+res.error);return;}
+    var fr=document.getElementById('flood-result');
+    fr.style.display='block';
+    fr.innerHTML='<b>'+res.n_flooded+'</b> flooded edges · <b>'+(res.n_scored||0)+'</b> scored · clear top-ranked first';
+    var pl=document.getElementById('pump-list');
+    if(!res.scores||!res.scores.length){pl.style.display='none';setHint('⚠ No simulatable flooded edges');return;}
+    pl.style.display='flex';
+    pl.innerHTML=(res.scores||[]).map(function(s,i){
+        var pct=s.pump_priority*100;
+        var col=pct>66?'var(--red)':pct>33?'#f59e0b':'var(--green)';
+        return '<div class="pump-item" style="cursor:pointer" onclick="highlightEdge(\''+s.edge_id+'\')">'
+            +'<span class="pump-item-rank">#'+(i+1)+'</span>'
+            +'<span class="pump-item-id" title="'+esc(s.edge_id)+'">'+esc(s.edge_id.slice(0,18))+'</span>'
+            +'<span class="pump-item-score" style="color:'+col+'">'+pct.toFixed(0)+'</span>'
+            +'</div>';
+    }).join('');
+    setHint('Pump priority ranked — top roads to clear first');
+}
+
+function runPumpPriority(){
+    var fname=document.getElementById('flood-file-select').value;
+    if(!fname){setHint('⚠ Select a flood snapshot first');return;}
+    var thresh=parseFloat(document.getElementById('flood-thresh').value);
+    var hour=parseInt(document.getElementById('hour').value);
+    showLoader('RANKING PUMP PRIORITY...');
+
+    fetch('/pump_priority?file='+encodeURIComponent(fname)+'&hour='+hour+'&threshold='+thresh+'&limit=15')
+        .then(function(r){return r.json();})
+        .then(function(init){
+            if(init.error){hideLoader();setHint('⚠ '+init.error);return;}
+            // Synchronous fast-path (empty result, no task needed)
+            if(!init.task_id){hideLoader();_renderPumpScores(init);return;}
+            setHint('Scoring '+init.n_flooded+' flooded edges…');
+            _pollTask(init.task_id,
+                function(res){hideLoader();_renderPumpScores(res);},
+                function(err){hideLoader();setHint('⚠ '+(err.message||'Pump priority failed'));});
+        })
+        .catch(function(err){hideLoader();setHint('⚠ '+(err.message||'Pump priority failed'));});
+}
+
+function highlightEdge(eid){
+    var vl=_ELM[eid];
+    if(!vl)return;
+    map.fitBounds(vl.getBounds&&vl.getBounds()?vl.getBounds():map.getBounds(),{maxZoom:16,padding:[80,80]});
+    vl.setStyle({color:'#fbbf24',weight:7,opacity:1,dashArray:null});
+    setTimeout(function(){
+        if(blockedEdges.has(eid))vl.setStyle({color:'#ef4444',weight:4,dashArray:'6,4',opacity:0.95});
+        else resetStyle(eid);
+    },2000);
+}
+
+// ══════════════════════════════════════════════════════
+//  SHARED DELTA GEOJSON LAYER RENDERER
+// ══════════════════════════════════════════════════════
+function applyDeltaLayer(res) {
+    if (window.removalLayer) map.removeLayer(window.removalLayer);
+    window.removalLayer = L.geoJSON(res.delta_geojson, {
+        style: function(f) {
+            var d = f.properties.delta_flow;
+            if (f.properties.congested)  return { color: '#b06bff', weight: 6, opacity: 1 };
+            if (d >  100) return { color: '#dc2626', weight: Math.min(3 + d / 40, 8), opacity: 0.9 };
+            if (d >   10) return { color: '#f87171', weight: Math.min(3 + d / 60, 7), opacity: 0.85 };
+            if (d < -100) return { color: '#1d4ed8', weight: Math.min(3 + Math.abs(d) / 40, 8), opacity: 0.9 };
+            if (d <  -10) return { color: '#60a5fa', weight: Math.min(3 + Math.abs(d) / 60, 7), opacity: 0.85 };
+            return { opacity: 0 };
+        },
+        onEachFeature: function(f, l) {
+            l.bindTooltip(
+                '<b>' + f.properties.edge_id + '</b><br>' +
+                'Δ flow: ' + (f.properties.delta_flow > 0 ? '+' : '') + f.properties.delta_flow.toFixed(0) + ' veh/h<br>' +
+                f.properties.flow_before.toFixed(0) + ' → ' + f.properties.flow_after.toFixed(0) + ' veh/h<br>' +
+                (f.properties.congested ? '<span style="color:#b06bff">⚠ NEWLY CONGESTED</span>' : ''),
+                { sticky: true }
+            );
+        }
+    }).addTo(map);
+}
+
+</script>
+</body>
+</html>
