@@ -9,6 +9,7 @@ All BPR math, Yen's k-paths on chain graph, and RemovalResult are unchanged.
 from __future__ import annotations
 
 import logging
+import math
 import pickle
 import time
 from dataclasses import dataclass, field
@@ -180,20 +181,23 @@ class RemovalResult:
     rerouted_flow:   float = 0.0
     total_delay:     float = 0.0
     warning:         str   = ""
+    paths:           list  = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "edge_id":           self.edge_id,
             "chain":             self.chain,
+            "chain_len":         len(self.chain),
             "hour":              self.hour,
             "displaced_flow":    round(float(self.displaced_flow), 2),
             "rerouted_flow":     round(float(self.rerouted_flow),  2),
-            "rerouted_pct":      round(self.rerouted_flow / max(self.displaced_flow, 1) * 100, 1),
-            "total_delay_s":     round(float(self.total_delay), 2),
+            "reroute_pct":       round(self.rerouted_flow / max(self.displaced_flow, 1) * 100, 1),
+            "total_delay_veh_h": round(float(self.total_delay) / 3600, 3),
             "n_newly_congested": int(self.newly_congested.sum()),
             "n_newly_relieved":  int(self.newly_relieved.sum()),
             "warning":           self.warning,
-            "tt_updated_raw":    self.tt_updated.tolist(),
+            "paths":             [{"edges": p["edges"], "tt": round(p["tt"], 2)} for p in self.paths],
+            "tt_updated_raw":    [1e15 if math.isinf(v) else v for v in self.tt_updated.tolist()],
         }
 
     def to_geojson_delta(self, state: NetworkState, edge_lookup: dict) -> dict:
@@ -212,8 +216,10 @@ class RemovalResult:
                 "properties": {
                     "edge_id":    eid,
                     "delta_flow": round(float(self.delta_flows[idx]), 2),
-                    "new_flow":   round(float(self.flows_updated[idx]), 2),
-                    "new_tt_s":   round(float(self.tt_updated[idx]), 2),
+                    "flow_before": round(float(state.flows[self.hour, idx]), 2),
+                    "flow_after":  round(float(self.flows_updated[idx]), 2),
+                    "new_tt_s":   round(float(self.tt_updated[idx]) if not math.isinf(self.tt_updated[idx]) else 1e15, 2),
+                    "congested":  bool(self.newly_congested[idx]),
                 },
             })
         return {"type": "FeatureCollection", "features": features}
@@ -400,7 +406,7 @@ def remove_edge(
     newly_congested = newly_congested & ~was_congested
     newly_relieved  = (~(flows_new / np.maximum(state.capacity, 1) > CONGESTION_VC_THRESHOLD)) & was_congested
 
-    total_delay = float(np.sum(np.maximum(delta_flows, 0) * (tt_new - tt_current)))
+    total_delay = float(np.nansum(np.maximum(delta_flows, 0) * (tt_new - tt_current)))
 
     warning = ""
     if rerouted < displaced_flow * 0.01 and displaced_flow > 1:
@@ -413,7 +419,7 @@ def remove_edge(
         delta_flows=delta_flows, flows_updated=flows_new, tt_updated=tt_new,
         newly_congested=newly_congested, newly_relieved=newly_relieved,
         displaced_flow=displaced_flow, rerouted_flow=rerouted,
-        total_delay=total_delay, warning=warning,
+        total_delay=total_delay, warning=warning, paths=paths,
     )
 
 
@@ -455,7 +461,7 @@ def apply_capacity_tune(
     tail_node = state.node_ids[state.nodes_to[tail_idx]]   if tail_idx is not None and state.nodes_to[tail_idx]   >= 0 else None
 
     paths = []
-    if chain_graph is not None and head_node and tail_node:
+    if displaced_flow > 0 and chain_graph is not None and head_node and tail_node:
         paths = _chain_k_paths(
             chain_graph, state, [], head_node, tail_node, tt_current, k,
         )
@@ -482,7 +488,8 @@ def apply_capacity_tune(
         newly_congested=newly_cong & ~was_cong,
         newly_relieved=(~newly_cong) & was_cong,
         displaced_flow=displaced_flow, rerouted_flow=rerouted,
-        total_delay=float(np.sum(np.maximum(delta_flows, 0) * (tt_new - tt_current))),
+        total_delay=float(np.nansum(np.maximum(delta_flows, 0) * (tt_new - tt_current))),
+        paths=paths,
     )
 
 
@@ -508,23 +515,29 @@ def apply_speed_floor(
 
     speed_ms    = min_speed_kmh / 3.6
     flows_adj   = base_flows.copy()
-    cap_adj     = state.capacity.copy()
+    cap_adj     = state.capacity.copy()   # unchanged — only flows are displaced
     displaced   = 0.0
 
     for ci in chain_idxs:
         lm     = float(state.length_m[ci])
         tt_min = lm / max(speed_ms, 0.1)
-        # BPR-invert to find max flow that achieves min speed
         tt_f   = float(tt_free_[ci])
+        # ratio = speed_free / speed_floor; < 1 means floor > free-flow speed
         ratio  = tt_min / max(tt_f, 0.01)
         if ratio <= 1.0:
-            continue   # already faster than floor
-        vc_max    = max(((ratio - 1.0) / BPR_ALPHA) ** (1.0 / BPR_BETA), 0.0)
-        cap_floor = min(float(state.capacity[ci]), vc_max * float(state.capacity[ci]))
-        excess    = max(0.0, float(base_flows[ci]) - cap_floor)
-        displaced          += excess
-        flows_adj[ci]       = float(base_flows[ci]) - excess
-        cap_adj[ci]         = cap_floor
+            # Floor exceeds free-flow — road can never meet the requirement;
+            # displace all current flow
+            excess = float(base_flows[ci])
+            displaced     += excess
+            flows_adj[ci]  = 0.0
+        else:
+            # BPR-invert: find the V/C at which BPR speed equals the floor
+            vc_max = max(((ratio - 1.0) / BPR_ALPHA) ** (1.0 / BPR_BETA), 0.0)
+            q_max  = vc_max * float(state.capacity[ci])
+            excess = max(0.0, float(base_flows[ci]) - q_max)
+            displaced     += excess
+            flows_adj[ci]  = float(base_flows[ci]) - excess
+        # cap_adj stays at original capacity so BPR gives tt = tt_min at q_max flow
 
     head_idx  = state.edge_index.get(chain_eids[0])
     tail_idx  = state.edge_index.get(chain_eids[-1])
@@ -532,7 +545,7 @@ def apply_speed_floor(
     tail_node = state.node_ids[state.nodes_to[tail_idx]]   if tail_idx is not None and state.nodes_to[tail_idx]   >= 0 else None
 
     paths = []
-    if chain_graph is not None and head_node and tail_node:
+    if displaced > 0 and chain_graph is not None and head_node and tail_node:
         paths = _chain_k_paths(chain_graph, state, [], head_node, tail_node, tt_current, k)
 
     assignments = _logit_assign(paths, displaced, theta)
@@ -557,7 +570,8 @@ def apply_speed_floor(
         newly_congested=newly_cong & ~was_cong,
         newly_relieved=(~newly_cong) & was_cong,
         displaced_flow=displaced, rerouted_flow=rerouted,
-        total_delay=float(np.sum(np.maximum(delta_flows, 0) * (tt_new - tt_current))),
+        total_delay=float(np.nansum(np.maximum(delta_flows, 0) * (tt_new - tt_current))),
+        paths=paths,
     )
 
 
