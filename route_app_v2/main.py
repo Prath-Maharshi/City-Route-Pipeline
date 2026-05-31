@@ -136,10 +136,13 @@ def _igraph_route(
         for eid, tt_val in tt_override.items():
             eidx = st.eid_to_eidx.get(eid)
             if eidx is not None:
-                info   = st.edge_lookup.get(eid, {})
-                type_m = ROAD_PENALTY.get(info.get("road_type", "unclassified"), 1.5)
-                conf_m = 1.0 + (1.0 - info.get("confidence", 0.1)) * 0.2
-                weights[eidx] = tt_val * type_m * conf_m + FALLBACK_TURN_S
+                if tt_val >= 1e14:
+                    weights[eidx] = BLOCKED_W
+                else:
+                    info   = st.edge_lookup.get(eid, {})
+                    type_m = ROAD_PENALTY.get(info.get("road_type", "unclassified"), 1.5)
+                    conf_m = 1.0 + (1.0 - info.get("confidence", 0.1)) * 0.2
+                    weights[eidx] = tt_val * type_m * conf_m + FALLBACK_TURN_S
 
     try:
         path_eidxs = G.get_shortest_path(
@@ -172,7 +175,7 @@ def _build_route_response(
     n_turns    = max(0, len(edge_sequence) - 1)
     turn_total = sum(turn_times) if turn_times else n_turns * FALLBACK_TURN_S
 
-    for i, eid in enumerate(edge_sequence):
+    for eid in edge_sequence:
         info   = el.get(eid, {})
         geom   = info.get("geom", [])
         if not route_coords:
@@ -392,6 +395,14 @@ def get_route(
     start_info = el[start]
     end_info   = el[end]
     tt_override = _session_tt_override(st, sid, hour)
+
+    # Hard-blocked flood edges are stored with inf tt — pull into explicit block set
+    # so both movement router and igraph treat them as impassable.
+    if tt_override:
+        session_blocked = {eid for eid, tt in tt_override.items() if tt >= 1e14}
+        if session_blocked:
+            blocked_edges = blocked_edges | session_blocked
+            tt_override   = {eid: tt for eid, tt in tt_override.items() if not math.isinf(tt)}
 
     # ── Movement-aware routing (primary) ─────────────────────────────────────
     if movements and st.movement_router and st.movement_router.loaded and st.movement_router.has_movements:
