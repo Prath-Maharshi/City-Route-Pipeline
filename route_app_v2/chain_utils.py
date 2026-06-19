@@ -201,29 +201,37 @@ class ChainGraph:
         """
         Build the full unblocked DiGraph, storing _chain_rep on every edge.
 
+        Also builds a _rep_to_edges index on the returned DiGraph so that
+        block_chains_in() can find edges to hide in O(|blocked_reps|) rather
+        than scanning all edges.
+
         Call this once when tt_current is stable (e.g. base hour state with no
         session accumulation).  Reuse the result across many per-edge queries by
         passing it to block_chains_in(), which wraps it in an O(1) restricted
         view rather than rebuilding O(CG_E) each time.
         """
         import networkx as nx
+        from collections import defaultdict
 
         DG: "nx.DiGraph" = nx.DiGraph()
         DG.add_nodes_from(self._cg.nodes())
+        rep_to_edges: dict = defaultdict(list)
         for u, v, key, data in self._cg.edges(keys=True, data=True):
             idxs = data.get("chain_idxs", [])
             tt = sum(float(tt_current[i]) for i in idxs) if idxs else 30.0
             if not DG.has_edge(u, v) or tt < DG[u][v]["tt"]:
                 DG.add_edge(u, v, tt=tt, chain_idxs=idxs, _chain_rep=key)
+                rep_to_edges[key].append((u, v))
+        DG.graph["_rep_to_edges"] = dict(rep_to_edges)
         return DG
 
     def block_chains_in(self, base_dg, blocked_eids) -> "nx.DiGraph":
         """
         Return a restricted view of base_dg with the chains containing
-        blocked_eids hidden.  O(1) graph creation — no copy of base_dg.
+        blocked_eids hidden.
 
-        base_dg must have been produced by build_base_digraph() so that each
-        edge carries a _chain_rep attribute used for identification.
+        Uses the _rep_to_edges index built by build_base_digraph() for
+        O(|blocked_reps|) lookup instead of scanning all edges.
         Multiple threads may call this concurrently on the same base_dg safely
         because restricted_view is read-only.
         """
@@ -232,10 +240,9 @@ class ChainGraph:
         blocked_reps = {self.eid_to_rep[e] for e in blocked_eids if e in self.eid_to_rep}
         if not blocked_reps:
             return base_dg
+        rep_to_edges = base_dg.graph.get("_rep_to_edges", {})
         edges_to_hide = frozenset(
-            (u, v)
-            for u, v, data in base_dg.edges(data=True)
-            if data.get("_chain_rep") in blocked_reps
+            e for rep in blocked_reps for e in rep_to_edges.get(rep, [])
         )
         if not edges_to_hide:
             return base_dg

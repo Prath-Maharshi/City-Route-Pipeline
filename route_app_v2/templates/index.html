@@ -379,8 +379,8 @@
         <div class="hover-metric"><div class="hover-metric-label">Speed</div><div class="hover-metric-value" id="hov-speed">—<span> km/h</span></div></div>
         <div class="hover-metric"><div class="hover-metric-label">Travel Time</div><div class="hover-metric-value" id="hov-tt">—<span> s</span></div></div>
         <div class="hover-metric"><div class="hover-metric-label">Length</div><div class="hover-metric-value" id="hov-len">—<span> m</span></div></div>
-        <div class="hover-metric"><div class="hover-metric-label">Confidence</div><div class="hover-metric-value" id="hov-conf">—<span> %</span></div></div>
-        <div class="hover-metric"></div> <!-- Spacer to align the grid -->
+        <div class="hover-metric"><div class="hover-metric-label">Uncertainty</div><div class="hover-metric-value" id="hov-unc-pct">—<span> %</span></div></div>
+        <div class="hover-metric"><div class="hover-metric-label">± Spread</div><div class="hover-metric-value" id="hov-unc-s">—<span> s</span></div></div>
         <div class="hover-metric full" style="grid-column: 1 / -1;">
             <div class="hover-metric-label">V/C Ratio</div>
             <div class="hover-metric-value" id="hov-vc">—</div>
@@ -707,7 +707,7 @@ function hideHover(){
 function quickCritHover(eid){
     var cs=critScores[eid],col=cs>0.66?'var(--red)':cs>0.33?'#f59e0b':'#1d4ed8';
     document.getElementById('hov-edge-id').innerHTML='<span style="opacity:0.6">'+esc(eid)+'</span>';
-    ['hov-flow','hov-speed','hov-tt','hov-len','hov-conf'].forEach(id=>document.getElementById(id).innerHTML='—');
+    ['hov-flow','hov-speed','hov-tt','hov-len','hov-unc-pct','hov-unc-s'].forEach(id=>document.getElementById(id).innerHTML='—');
     document.getElementById('hov-vc').innerHTML='—';document.getElementById('hov-vc-fill').style.width='0%';
     document.getElementById('hov-badges').innerHTML='<div style="margin-top:4px;font-family:var(--mono);font-size:9px;color:var(--muted)">CRITICALITY &nbsp;<b style="color:'+col+';font-size:14px">'+(cs*100).toFixed(1)+'</b></div>';
     document.getElementById('hover-card').classList.add('visible');
@@ -720,7 +720,8 @@ function fillHover(eid,d){
     document.getElementById('hov-speed').innerHTML=d.speed_kmh!==null?d.speed_kmh.toFixed(1)+'<span> km/h</span>':'—';
     document.getElementById('hov-tt').innerHTML=d.tt_s!==null?d.tt_s.toFixed(1)+'<span> s</span>':'—';
     document.getElementById('hov-len').innerHTML=d.length_m!==undefined?Math.round(d.length_m)+'<span> m</span>':'—';
-    document.getElementById('hov-conf').innerHTML=d.confidence!==null?Math.round(d.confidence*100)+'<span> %</span>':'—';
+    document.getElementById('hov-unc-pct').innerHTML=d.tt_uncertainty_pct!=null?d.tt_uncertainty_pct.toFixed(1)+'<span> %</span>':'—';
+    document.getElementById('hov-unc-s').innerHTML=d.tt_uncertainty_s!=null?d.tt_uncertainty_s.toFixed(1)+'<span> s</span>':'—';
     var vc=d.vc_ratio;
     if(vc!==null&&vc!==undefined){var pct=Math.min(vc*100,100),col=vc>0.85?'var(--red)':vc>0.6?'#f59e0b':'var(--green)';document.getElementById('hov-vc').innerHTML=vc.toFixed(3);document.getElementById('hov-vc-fill').style.width=pct+'%';document.getElementById('hov-vc-fill').style.background=col}
     else{document.getElementById('hov-vc').innerHTML='—';document.getElementById('hov-vc-fill').style.width='0%'}

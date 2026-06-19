@@ -312,31 +312,41 @@ def edge_info(edge: str, hour: int = 12):
     st = S.get_state()
     hour = max(0, min(23, hour))
 
+    el = st.edge_lookup.get(edge)
+    if not el:
+        return JSONResponse({"error": "Edge not found"}, status_code=404)
+
+    tt_arr = el.get("tt",      [30.0] * 24)
+    lo_arr = el.get("tt_low",  tt_arr)
+    hi_arr = el.get("tt_high", tt_arr)
+    base_t = tt_arr[hour] if hour < len(tt_arr) else tt_arr[-1]
+    low_t  = lo_arr[hour] if hour < len(lo_arr) else lo_arr[-1]
+    high_t = hi_arr[hour] if hour < len(hi_arr) else hi_arr[-1]
+    tt_uncertainty_s   = round(high_t - low_t, 1)
+    tt_uncertainty_pct = round((high_t - low_t) / max(base_t, 1.0) * 100, 1)
+
     if st.removal_loaded and st.bpr_state is not None:
         from bpr_engine import get_edge_info
         info = get_edge_info(st.bpr_state, edge, hour)
         if info:
-            el = st.edge_lookup.get(edge, {})
-            info["confidence"] = el.get("confidence", info.get("confidence", 0.0))
+            info["tt_uncertainty_s"]   = tt_uncertainty_s
+            info["tt_uncertainty_pct"] = tt_uncertainty_pct
             return info
 
-    el = st.edge_lookup.get(edge)
-    if not el:
-        return JSONResponse({"error": "Edge not found"}, status_code=404)
-    tt  = el["tt"][hour]
-    lm  = el["length"]
+    lm = el.get("length", 1.0)
     return {
-        "edge_id":    edge,
-        "road_type":  el.get("road_type", "unknown"),
-        "length_m":   round(lm, 1),
-        "capacity":   None,
-        "flow_veh_h": None,
-        "vc_ratio":   None,
-        "tt_s":       round(tt, 1),
-        "speed_kmh":  round((lm / max(tt, 0.1)) * 3.6, 1),
-        "confidence": round(el.get("confidence", 0.0), 3),
-        "data_source": "geojson",
-        "chain_len":   1,
+        "edge_id":             edge,
+        "road_type":           el.get("road_type", "unknown"),
+        "length_m":            round(lm, 1),
+        "capacity":            None,
+        "flow_veh_h":          None,
+        "vc_ratio":            None,
+        "tt_s":                round(base_t, 1),
+        "speed_kmh":           round((lm / max(base_t, 0.1)) * 3.6, 1),
+        "data_source":         "geojson",
+        "chain_len":           1,
+        "tt_uncertainty_s":    tt_uncertainty_s,
+        "tt_uncertainty_pct":  tt_uncertainty_pct,
     }
 
 
@@ -658,13 +668,26 @@ def get_criticality(hour: int = 8, background_tasks: BackgroundTasks = None):
                                    "done": 0, "total": len(candidates), "pct": 0}
 
     def _run():
-        from bpr_engine import remove_edge
-        raw = []
+        from bpr_engine import remove_edge, get_base_dg
+        raw   = []
         total = len(candidates)
-        for i, eid in enumerate(candidates):
+        base_dg = get_base_dg(st.chain_graph, state, hour)
+
+        def _score_one(args):
+            i, eid = args
             try:
-                r = remove_edge(state, eid, hour, chain_index=st.chains,
-                                chain_graph=st.chain_graph)
+                r = remove_edge(state, eid, hour,
+                                chain_index=st.chains,
+                                chain_graph=st.chain_graph,
+                                prebuilt_chain_dg=base_dg)
+                return i, eid, r
+            except Exception:
+                return i, eid, None
+
+        with ThreadPoolExecutor(max_workers=min(8, len(candidates))) as pool:
+            for i, eid, r in pool.map(_score_one, enumerate(candidates)):
+                if r is None:
+                    continue
                 rp = r.rerouted_flow / max(r.displaced_flow, 1) * 100
                 raw.append({
                     "edge_id":           eid,
@@ -675,10 +698,8 @@ def get_criticality(hour: int = 8, background_tasks: BackgroundTasks = None):
                     "n_congested":       int(r.newly_congested.sum()),
                     "warning":           r.warning,
                 })
-            except Exception:
-                pass
-            if i % 25 == 0 and hour in st.criticality_cache:
-                st.criticality_cache[hour].update(done=i, pct=round(i / total * 100, 1))
+                if i % 25 == 0 and hour in st.criticality_cache:
+                    st.criticality_cache[hour].update(done=i, pct=round(i / total * 100, 1))
 
         if raw:
             def _norm(arr):

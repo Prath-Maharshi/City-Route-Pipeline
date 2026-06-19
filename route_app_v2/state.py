@@ -181,15 +181,17 @@ def _build_startup_cache() -> dict:
 
     lite_feats = []
     for feat in raw_data["features"]:
-        p  = feat["properties"]
-        vc = p.get("vc_ratio") or []
+        p       = feat["properties"]
+        tt_lo   = p.get("travel_time_low_s",  []) or []
+        tt_hi   = p.get("travel_time_high_s", []) or []
+        spread_noon = round(tt_hi[12] - tt_lo[12], 1) if len(tt_hi) > 12 and len(tt_lo) > 12 else 0.0
         lite_feats.append({
             "type": "Feature",
             "geometry": feat["geometry"],
             "properties": {
-                "id":        p["id"],
-                "road_type": p.get("road_type", "unclassified"),
-                "vc_noon":   round(vc[12], 3) if len(vc) > 12 else 0.0,
+                "id":              p["id"],
+                "road_type":       p.get("road_type", "unclassified"),
+                "tt_spread_noon":  spread_noon,
             },
         })
     lite_raw  = json.dumps({"type": "FeatureCollection", "features": lite_feats},
@@ -272,26 +274,34 @@ def _build_weight_arrays(
     t0 = time.time()
     E = len(eids_list)
 
-    # Per-edge static multipliers (road_type × confidence)
+    # Road-type multipliers — static across hours
     type_mults = np.array([
         ROAD_PENALTY.get(edge_lookup[eid].get("road_type", "unclassified"), 1.5)
         for eid in eids_list
     ], dtype=np.float64)
-    conf_mults = np.array([
-        1.0 + (1.0 - edge_lookup[eid].get("confidence", 0.1)) * 0.2
-        for eid in eids_list
-    ], dtype=np.float64)
-    static_mult = type_mults * conf_mults
 
-    # Base travel times: (E, 24) → (24, E)
-    tt_matrix = np.array(
-        [edge_lookup[eid]["tt"] for eid in eids_list],
-        dtype=np.float64
-    ).T   # shape (24, E)
+    # Travel-time matrices: (E, 24) → transposed to (24, E)
+    def _tt_mat(key: str, fallback_key: str = "tt") -> np.ndarray:
+        return np.array(
+            [edge_lookup[eid].get(key, edge_lookup[eid]["tt"]) for eid in eids_list],
+            dtype=np.float64,
+        ).T   # (24, E)
+
+    tt_matrix  = _tt_mat("tt")
+    tt_low_mat = _tt_mat("tt_low")
+    tt_hi_mat  = _tt_mat("tt_high")
+
+    # Per-hour fractional uncertainty spread: (tt_high − tt_low) / tt_base ∈ [0, 1]
+    # Replaces the confidence-based static multiplier with data-driven, hour-specific penalty.
+    spread_frac = np.clip(
+        (tt_hi_mat - tt_low_mat) / np.maximum(tt_matrix, 1.0),
+        0.0, 1.0,
+    )  # shape (24, E)
 
     weights_by_hour: list[np.ndarray] = []
     for h in range(24):
-        w = tt_matrix[h] * static_mult + FALLBACK_TURN_S
+        uncertainty_mults = 1.0 + spread_frac[h] * 0.2
+        w = tt_matrix[h] * type_mults * uncertainty_mults + FALLBACK_TURN_S
         weights_by_hour.append(w)
 
     print(f"Weight arrays ready: 24 × {E} floats  ({time.time()-t0:.2f}s)")
@@ -312,26 +322,30 @@ def build_app_state() -> AppState:
     st.geojson_lite_gz   = sc.get("geojson_lite_gz", b"")
     st.geojson_lite_etag = sc.get("geojson_lite_etag", "")
 
-    # Rebuild lite GeoJSON if cache predates this feature
-    if not st.geojson_lite_gz:
-        print("Building lite GeoJSON ...")
-        _raw = json.loads(gzip.decompress(st.geojson_gz))
-        _lf  = []
-        for _feat in _raw["features"]:
-            _p = _feat["properties"]
-            _vc = _p.get("vc_ratio") or []
-            _lf.append({
-                "type": "Feature", "geometry": _feat["geometry"],
-                "properties": {
-                    "id":        _p["id"],
-                    "road_type": _p.get("road_type", "unclassified"),
-                    "vc_noon":   round(_vc[12], 3) if len(_vc) > 12 else 0.0,
-                },
-            })
-        _lr = json.dumps({"type": "FeatureCollection", "features": _lf},
-                         separators=(",", ":")).encode()
-        st.geojson_lite_etag = '"' + hashlib.md5(_lr).hexdigest() + '"'
-        st.geojson_lite_gz   = gzip.compress(_lr, compresslevel=6)
+    # Always rebuild lite GeoJSON from edge_lookup so the tt_spread_noon field
+    # is current even when loading an older startup_cache.pkl.
+    print("Building lite GeoJSON ...")
+    _lf = []
+    for _eid, _info in st.edge_lookup.items():
+        _coords = _info.get("geom", [])
+        if not _coords:
+            continue
+        _tt_lo  = _info.get("tt_low",  _info.get("tt", [0.0] * 24))
+        _tt_hi  = _info.get("tt_high", _info.get("tt", [0.0] * 24))
+        _spread_noon = round(_tt_hi[12] - _tt_lo[12], 1) if len(_tt_hi) > 12 and len(_tt_lo) > 12 else 0.0
+        _lf.append({
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": _coords},
+            "properties": {
+                "id":             _eid,
+                "road_type":      _info.get("road_type", "unclassified"),
+                "tt_spread_noon": _spread_noon,
+            },
+        })
+    _lr = json.dumps({"type": "FeatureCollection", "features": _lf},
+                     separators=(",", ":")).encode()
+    st.geojson_lite_etag = '"' + hashlib.md5(_lr).hexdigest() + '"'
+    st.geojson_lite_gz   = gzip.compress(_lr, compresslevel=6)
 
     # ── 2. igraph DiGraph ─────────────────────────────────────────────────────
     (st.G, st.node_to_vid, st.eid_to_eidx,

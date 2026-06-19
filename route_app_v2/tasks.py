@@ -37,7 +37,8 @@ def get_task(tid: str) -> dict | None:
 def evict_old_tasks() -> int:
     now = time.time()
     with _tasks_lock:
-        stale = [k for k, t in _tasks.items() if now - t["ts"] > TASK_TTL_S]
+        stale = [k for k, t in _tasks.items()
+                 if t["status"] != "running" and now - t["ts"] > TASK_TTL_S]
         for k in stale:
             del _tasks[k]
     return len(stale)

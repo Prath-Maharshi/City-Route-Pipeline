@@ -126,13 +126,17 @@ class MovementRouter:
             d = edge_lookup.get(eid, {})
             if not d:
                 return 30.0
-            type_m = ROAD_PENALTY.get(d.get("road_type", "unclassified"), 1.5)
-            conf_m = 1.0 + (1.0 - d.get("confidence", 0.1)) * 0.2
-            if tt_override and eid in tt_override:
-                return tt_override[eid] * type_m * conf_m
-            tt_arr = d.get("tt", [30.0] * 24)
-            base_t = tt_arr[hour] if hour < len(tt_arr) else tt_arr[-1]
-            return base_t * type_m * conf_m
+            type_m  = ROAD_PENALTY.get(d.get("road_type", "unclassified"), 1.5)
+            tt_arr  = d.get("tt",      [30.0] * 24)
+            lo_arr  = d.get("tt_low",  tt_arr)
+            hi_arr  = d.get("tt_high", tt_arr)
+            base_t  = tt_override[eid] if (tt_override and eid in tt_override) \
+                      else (tt_arr[hour] if hour < len(tt_arr) else tt_arr[-1])
+            low_t   = lo_arr[hour] if hour < len(lo_arr) else lo_arr[-1]
+            high_t  = hi_arr[hour] if hour < len(hi_arr) else hi_arr[-1]
+            spread_frac   = (high_t - low_t) / max(base_t, 1.0)
+            uncertainty_m = 1.0 + min(spread_frac, 1.0) * 0.2
+            return base_t * type_m * uncertainty_m
 
         dist: dict[str, float]          = {}
         prev: dict[str, Optional[str]]  = {}

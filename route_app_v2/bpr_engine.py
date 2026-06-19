@@ -317,11 +317,17 @@ def _logit_assign(
     displaced_flow: float,
     theta: float,
 ) -> np.ndarray:
-    """Multinomial logit over paths. Returns flow delta array (sparse)."""
+    """Multinomial logit over paths. Returns flow delta array (sparse).
+
+    theta is treated as a dimensionless sensitivity: disutility per unit of
+    reference travel time, not per raw second.  This keeps behaviour consistent
+    regardless of network scale (short urban hops vs long arterials).
+    """
     if not paths:
         return np.array([], dtype=np.float64)
     min_tt  = min(p["tt"] for p in paths)
-    weights = [np.exp(-theta * (p["tt"] - min_tt)) for p in paths]
+    ref_tt  = max(min_tt, 1.0)   # normalise so theta is scale-independent
+    weights = [np.exp(-theta * (p["tt"] - min_tt) / ref_tt) for p in paths]
     total_w = sum(weights)
     shares  = [w / total_w for w in weights]
     flows   = [s * displaced_flow for s in shares]
@@ -394,7 +400,8 @@ def remove_edge(
                 flows_new[ei] += flow_share
 
     # Recompute BPR travel times
-    tt_new = _bpr_tt(flows_new, state.capacity, tt_free_)
+    tt_bpr_base = _bpr_tt(base_flows,  state.capacity, tt_free_)
+    tt_new      = _bpr_tt(flows_new,   state.capacity, tt_free_)
     # Keep blocked chain edges at inf travel time
     for ci in chain_idxs:
         tt_new[ci]   = float("inf")
@@ -406,7 +413,13 @@ def remove_edge(
     newly_congested = newly_congested & ~was_congested
     newly_relieved  = (~(flows_new / np.maximum(state.capacity, 1) > CONGESTION_VC_THRESHOLD)) & was_congested
 
-    total_delay = float(np.nansum(np.maximum(delta_flows, 0) * (tt_new - tt_current)))
+    # Total network delay change: compare BPR against BPR so model-vs-observed
+    # mismatch doesn't produce a spurious baseline offset across all N edges.
+    # Chain edges are excluded from "after" (inf tt_new) but included in "before".
+    total_delay = float(
+        np.nansum(flows_new[np.isfinite(tt_new)] * tt_new[np.isfinite(tt_new)])
+        - np.nansum(base_flows * tt_bpr_base)
+    )
 
     warning = ""
     if rerouted < displaced_flow * 0.01 and displaced_flow > 1:
@@ -476,7 +489,8 @@ def apply_capacity_tune(
             if ei is not None:
                 flows_new[ei] += flow_share
 
-    tt_new      = _bpr_tt(flows_new, cap_adjusted, tt_free_)
+    tt_bpr_base = _bpr_tt(base_flows, state.capacity, tt_free_)
+    tt_new      = _bpr_tt(flows_new,  cap_adjusted,   tt_free_)
     delta_flows = flows_new - base_flows
 
     newly_cong = (flows_new / np.maximum(state.capacity, 1)) > CONGESTION_VC_THRESHOLD
@@ -488,7 +502,10 @@ def apply_capacity_tune(
         newly_congested=newly_cong & ~was_cong,
         newly_relieved=(~newly_cong) & was_cong,
         displaced_flow=displaced_flow, rerouted_flow=rerouted,
-        total_delay=float(np.nansum(np.maximum(delta_flows, 0) * (tt_new - tt_current))),
+        total_delay=float(
+            np.nansum(flows_new[np.isfinite(tt_new)] * tt_new[np.isfinite(tt_new)])
+            - np.nansum(base_flows * tt_bpr_base)
+        ),
         paths=paths,
     )
 
@@ -558,7 +575,8 @@ def apply_speed_floor(
             if ei is not None:
                 flows_new[ei] += flow_share
 
-    tt_new      = _bpr_tt(flows_new, cap_adj, tt_free_)
+    tt_bpr_base = _bpr_tt(base_flows, state.capacity, tt_free_)
+    tt_new      = _bpr_tt(flows_new,  cap_adj,        tt_free_)
     delta_flows = flows_new - base_flows
 
     newly_cong = (flows_new / np.maximum(state.capacity, 1)) > CONGESTION_VC_THRESHOLD
@@ -570,7 +588,10 @@ def apply_speed_floor(
         newly_congested=newly_cong & ~was_cong,
         newly_relieved=(~newly_cong) & was_cong,
         displaced_flow=displaced, rerouted_flow=rerouted,
-        total_delay=float(np.nansum(np.maximum(delta_flows, 0) * (tt_new - tt_current))),
+        total_delay=float(
+            np.nansum(flows_new[np.isfinite(tt_new)] * tt_new[np.isfinite(tt_new)])
+            - np.nansum(base_flows * tt_bpr_base)
+        ),
         paths=paths,
     )
 
